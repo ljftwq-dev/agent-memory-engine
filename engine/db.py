@@ -5,6 +5,8 @@ One .db file holds both structured metadata and the vector index
 
 - ``episodic`` table: metadata (topic / summary / raw / strength / tau / ...)
 - ``episodic_vec`` virtual table: vec0 index (FLOAT[dim]), joined to episodic by rowid
+- ``episodic_fts`` virtual table: FTS5 full-text index over (topic, summary),
+  used by the BM25 branch of hybrid recall. Auto-created if FTS5 is available.
 """
 import os
 import sqlite3
@@ -38,6 +40,7 @@ def init_db(dim=None, force=False):
         if force:
             conn.execute("DROP TABLE IF EXISTS episodic")
             conn.execute("DROP TABLE IF EXISTS episodic_vec")
+            conn.execute("DROP TABLE IF EXISTS episodic_fts")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS episodic (
                 rowid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +60,8 @@ def init_db(dim=None, force=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic(ts)")
+        if fts5_available():
+            init_fts(conn)
         conn.commit()
         return dim
     finally:
@@ -83,9 +88,105 @@ def get_dim(db_path=None):
         conn.close()
 
 
+# ---------------------------------------------------------------------------
+# FTS5 full-text index (for the BM25 branch of hybrid recall)
+# ---------------------------------------------------------------------------
+
+_FTS5_AVAILABLE = None
+
+
+def fts5_available():
+    """Cache whether the underlying SQLite engine supports FTS5."""
+    global _FTS5_AVAILABLE
+    if _FTS5_AVAILABLE is None:
+        try:
+            probe = sqlite3.connect(":memory:")
+            probe.execute("CREATE VIRTUAL TABLE _probe USING fts5(x)")
+            probe.close()
+            _FTS5_AVAILABLE = True
+        except sqlite3.Error:
+            _FTS5_AVAILABLE = False
+    return _FTS5_AVAILABLE
+
+
+def init_fts(conn):
+    """Create the FTS5 external-content index over episodic + sync triggers.
+
+    Idempotent. No-op if FTS5 is unavailable. Safe to call on every init_db.
+    """
+    if not fts5_available():
+        return
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5(
+            topic, summary,
+            content='episodic', content_rowid='rowid',
+            tokenize='unicode61'
+        )
+    """)
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS episodic_fts_ai AFTER INSERT ON episodic BEGIN
+            INSERT INTO episodic_fts(rowid, topic, summary)
+            VALUES (new.rowid, new.topic, new.summary);
+        END;
+        CREATE TRIGGER IF NOT EXISTS episodic_fts_ad AFTER DELETE ON episodic BEGIN
+            INSERT INTO episodic_fts(episodic_fts, rowid, topic, summary)
+            VALUES('delete', old.rowid, old.topic, old.summary);
+        END;
+        CREATE TRIGGER IF NOT EXISTS episodic_fts_au AFTER UPDATE ON episodic BEGIN
+            INSERT INTO episodic_fts(episodic_fts, rowid, topic, summary)
+            VALUES('delete', old.rowid, old.topic, old.summary);
+            INSERT INTO episodic_fts(rowid, topic, summary)
+            VALUES (new.rowid, new.topic, new.summary);
+        END;
+    """)
+    # backfill if FTS is empty but episodic has rows (e.g. FTS added later)
+    n = conn.execute("SELECT COUNT(*) FROM episodic_fts").fetchone()[0]
+    if n == 0:
+        conn.execute(
+            "INSERT INTO episodic_fts(rowid, topic, summary) "
+            "SELECT rowid, topic, summary FROM episodic"
+        )
+    conn.commit()
+
+
+def fts5_search(conn, query, k):
+    """BM25 recall via FTS5. Returns ``[(rowid, bm25_score), ...]``.
+
+    ``bm25_score`` is FTS5's ``bm25()`` (negative; smaller = more relevant).
+    Empty list on no match or error. Tokenization mirrors unicode61
+    (ASCII words + one CJK char per token) so MATCH works on Chinese.
+    """
+    if not fts5_available():
+        return []
+    toks = _fts_tokenize(query)
+    if not toks:
+        return []
+    fts_query = " OR ".join(toks)  # OR => wide recall, RRF + strength refine later
+    try:
+        rows = conn.execute(
+            "SELECT rowid, bm25(episodic_fts) AS score "
+            "FROM episodic_fts WHERE episodic_fts MATCH ? "
+            "ORDER BY score LIMIT ?",
+            (fts_query, k),
+        ).fetchall()
+        return [(r["rowid"], r["score"]) for r in rows]
+    except sqlite3.Error:
+        return []
+
+
+def _fts_tokenize(text):
+    """ASCII words + one CJK char per token (matches unicode61 CJK behavior)."""
+    import re
+    text = (text or "").lower()
+    toks = re.findall(r"[a-z0-9]+", text)
+    toks += re.findall(r"[\u4e00-\u9fff]", text)
+    return toks
+
+
 if __name__ == "__main__":
     import sys
     force = "--force" in sys.argv
     d = init_db(force=force)
     print(f"DB ready at: {config.db_path()}")
     print(f"vector dim: {d}")
+    print(f"fts5: {'available' if fts5_available() else 'unavailable (BM25 fallback = pure Python)'}")

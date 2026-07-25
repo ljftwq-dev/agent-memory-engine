@@ -15,10 +15,12 @@ DEFAULTS = {
     "LLM_API_KEY": "",
     "LLM_MODEL": "glm-4-flash",
     "RECALL_THRESHOLD": "0.9",   # distance upper bound (larger = looser gate)
-    "RECALL_POOL": "15",         # stage-A wide recall count
+    "RECALL_POOL": "15",         # stage-A wide recall count (vector path)
     "ALPHA": "0.5",              # strength weight in rerank score
     "MIN_STRENGTH": "0.05",
     "DEDUP_THRESHOLD": "0.45",   # distance <= this => merge into existing memory
+    "HYBRID_ENABLE": "1",        # 1 = vector+BM25 hybrid recall, 0 = vector only
+    "BM25_POOL": "15",           # stage-A BM25 recall count (hybrid mode)
 }
 
 _loaded = False
@@ -109,3 +111,11 @@ def min_strength():
 
 def dedup_threshold():
     return float(get("DEDUP_THRESHOLD"))
+
+
+def hybrid_enable():
+    return get("HYBRID_ENABLE") in ("1", "true", "yes", "on")
+
+
+def bm25_pool():
+    return int(get("BM25_POOL"))

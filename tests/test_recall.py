@@ -7,7 +7,7 @@ Run:  pytest -q
 """
 from datetime import datetime, timedelta
 
-from engine import db, embed
+from engine import config, db, embed
 from engine.remember import remember
 from engine.recall import recall, _strength_now
 from engine.forget import decay_all
@@ -126,3 +126,49 @@ def test_embed_dim_consistency():
     finally:
         conn.close()
     assert len(row[0]) // 4 == embed.dim()
+
+
+def test_hybrid_is_default():
+    """Hybrid (vector + BM25) recall is on by default."""
+    assert config.hybrid_enable() is True
+
+
+def test_hybrid_bm25_rescues_keyword_match():
+    """BM25 branch recalls a memory a strict vector gate would drop.
+
+    Query shares the keyword 'python' with the stored summary but is otherwise
+    different -> different hash vector -> large distance -> gated out in
+    pure-vector mode. The BM25 branch still matches on the shared keyword, so
+    hybrid recall rescues it. This is the core value of hybrid retrieval.
+    """
+    remember(topic="t", summary="python pytest fixture scope session")
+    strict = 0.1
+    r_vec = recall("python testing unrelated zzz", top_k=3,
+                   hybrid=False, threshold=strict)
+    assert len(r_vec) == 0                      # pure-vector: gated out
+    r_hyb = recall("python testing unrelated zzz", top_k=3,
+                   hybrid=True, threshold=strict)
+    assert len(r_hyb) >= 1                      # hybrid: BM25 rescued
+    assert r_hyb[0]["summary"] == "python pytest fixture scope session"
+    assert "rrf" in r_hyb[0]
+
+
+def test_hybrid_rrf_scores_are_normalized():
+    """RRF relevance is normalized to [0, 1] and present on every result."""
+    remember(topic="t1", summary="python testing basics")
+    remember(topic="t2", summary="python advanced patterns")
+    results = recall("python", top_k=5, hybrid=True)
+    assert len(results) >= 1
+    for r in results:
+        assert "rrf" in r
+        assert 0.0 <= r["rrf"] <= 1.0
+        assert r["score"] >= 0.0
+
+
+def test_vector_only_mode_has_no_rrf():
+    """hybrid=False keeps the legacy pure-vector behavior (no rrf field)."""
+    remember(topic="t", summary="python pytest fixture scope session")
+    results = recall("python pytest fixture scope session", top_k=3, hybrid=False)
+    assert len(results) == 1
+    assert "rrf" not in results[0]
+    assert "sim" in results[0]

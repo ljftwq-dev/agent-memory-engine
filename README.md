@@ -19,6 +19,7 @@ into the prompt. This engine is different:
 | Feature | What it buys you |
 |---|---|
 | **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
+| **Hybrid recall (vector + BM25)** | Vector KNN for semantic match + FTS5 BM25 for keyword match, fused via RRF. Catches keyword hits the vector path alone would miss. Disable with `AME_HYBRID_ENABLE=0`. |
 | **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
 | **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
 | **Single SQLite file** | Structured data + vector index in one `.db`. No separate vector server, no extra process - just copy the file. |
@@ -98,8 +99,8 @@ agent-memory-engine/
 **Problem**: pure semantic match causes *context pollution* - "semantically
 close" ≠ "useful", so you shovel adjacent junk into the prompt.
 **Solution (wide in, strict out)**:
-1. **Gate only kills pure noise** (distance > threshold).
-2. **Rerank decides relevance**: `score = α·strength + (1-α)·sim`, take top-k.
+1. **Gate only kills pure noise** (distance > threshold). In hybrid mode, BM25 hits bypass the gate.
+2. **Rerank decides relevance**: in hybrid mode relevance = RRF-fused vector + BM25 rank; otherwise `sim = 1 - distance`. Final `score = α·strength + (1-α)·relevance`, take top-k.
 3. **`strength` is lightweight utility**: Ebbinghaus `exp(-Δt/τ)`, where each
    recall does `τ *= 1.5`. Frequently-recalled memories stay strong. This
    replaces MemRL's Q-value without needing reward data.
@@ -125,6 +126,8 @@ Full writeup: [`docs/design.md`](docs/design.md).
 | `AME_ALPHA` | `0.5` | strength weight in rerank (0..1) |
 | `AME_MIN_STRENGTH` | `0.05` | drop memories below this real-time strength |
 | `AME_DEDUP_THRESHOLD` | `0.45` | on store, distance ≤ this merges into existing |
+| `AME_HYBRID_ENABLE` | `1` | vector + BM25 hybrid recall (0 = vector only) |
+| `AME_BM25_POOL` | `15` | stage-A BM25 recall count (hybrid mode) |
 
 ---
 
