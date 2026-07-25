@@ -1,14 +1,17 @@
 // opencode plugin example - shows how ANY coding agent connects to the engine
 // over HTTP. This is a battle-tested, stripped-down version of a production
-// plugin: it injects recalled memories into the system prompt, runs a semantic
-// recall on each new user turn, and stores the finished turn as a new memory.
+// plugin. It does three jobs:
+//   1. recall   - inject related memories into the system prompt each turn
+//   2. remember - store each finished turn as a new memory
+//   3. collab   - register this window so sibling windows can see what it is
+//                 doing, and vice versa (multi-agent collaboration)
 //
 // Hooks used (see opencode plugin docs):
-//   experimental.chat.system.transform   - inject memories into system prompt
+//   experimental.chat.system.transform   - inject memories + sibling sessions
 //   experimental.chat.messages.transform - semantic recall on latest user msg
 //   chat.message                         - record user messages (dedup)
 //   event: message.part.delta            - accumulate streaming assistant text
-//   event: session.idle                  - store the finished turn
+//   event: session.idle                  - store the turn + heartbeat progress
 //
 // Install (in your opencode project):
 //   1.  npm i -D typescript @types/node      (if not present)
@@ -17,6 +20,8 @@
 //         { "plugin": ["./examples/opencode/memory.ts"] }
 //   4.  (optional) set AME_HARD_RULES_FILE to inject a fixed rule block on
 //       every turn - handy for keeping house rules sticky across sessions.
+//   5.  open a second opencode window in another project -> both windows now
+//       see each other's current task via GET /sessions/active.
 
 import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
@@ -32,8 +37,12 @@ const seenTextHashes = new Set<string>()       // dedup layer 2: text hash
 const msgRoleMap = new Map<string, string>()   // messageId -> role
 
 let cachedRecall = ""                           // injected into system prompt
+let cachedSiblings = ""                         // other sessions' state (collab)
 let pendingAssistantText = ""                   // streaming assistant accumulator
 let lastRememberedTs = Date.now()               // incremental cursor
+
+let SESSION_ID = ""                             // this window's id (collab)
+let myTask = ""                                 // current task, shown to siblings
 
 // --- helpers --------------------------------------------------------------
 function hashStr(s: string): string {
@@ -55,6 +64,14 @@ async function fetchJson(url: string, opts: any = {}): Promise<any | null> {
     if (!r.ok) return null
     return await r.json()
   } catch { return null }
+}
+
+async function postJson(url: string, body: any): Promise<any | null> {
+  return fetchJson(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
 }
 
 // Pull text out of the various message shapes opencode emits.
@@ -118,6 +135,66 @@ function recordMessage(role: string, text: string, source: string, msgId?: strin
   return true
 }
 
+// --- multi-agent collaboration -------------------------------------------
+// This window registers itself so sibling opencode windows can see what it is
+// doing via GET /sessions/active. session_id ideally comes from opencode's ctx;
+// the fallback derives a stable id from cwd so re-runs in the same project
+// coalesce instead of stacking up as ghost sessions.
+
+function initSessionId(ctx: any): string {
+  const fromCtx =
+    ctx?.sessionID || ctx?.sessionId || ctx?.session?.id || ctx?.client?.sessionID
+  if (fromCtx) return String(fromCtx)
+  return `oc-${hashStr(process.cwd())}`
+}
+
+function defaultTask(): string {
+  // working-dir name is a decent first guess at "what this window is for";
+  // the user can override by re-registering via /session/register
+  const parts = process.cwd().split(/[\\\/]/).filter(Boolean)
+  return parts[parts.length - 1] || "opencode"
+}
+
+async function registerSelf(task: string) {
+  await postJson(`${MEMORY_SERVER}/session/register`, { session_id: SESSION_ID, task })
+}
+
+async function heartbeat(progress: string) {
+  await postJson(`${MEMORY_SERVER}/session/heartbeat`, {
+    session_id: SESSION_ID,
+    progress: (progress || "").slice(0, 300),
+  })
+}
+
+function formatSiblings(sessions: any[], myId: string): string {
+  const others = (sessions || []).filter((s) => s && s.session_id !== myId)
+  if (!others.length) return ""
+  const lines = [
+    `# Other agent sessions currently active`,
+    ``,
+    `> Auto-injected by the memory engine. These are sibling windows/processes`,
+    `> working in parallel. If one finishes a related task, recall its history`,
+    `> instead of asking the user for a handoff doc.`,
+    ``,
+  ]
+  for (const s of others) {
+    const ts = (s.updated_ts || "").slice(11, 16)
+    lines.push(`## [${ts}] ${s.task || "(no task)"}  <${s.session_id}>`)
+    if (s.progress) lines.push(`progress: ${(s.progress || "").slice(0, 200)}`)
+    lines.push(``)
+  }
+  return lines.join("\n")
+}
+
+async function refreshSiblings() {
+  try {
+    const data = await fetchJson(`${MEMORY_SERVER}/sessions/active`)
+    if (data?.ok && Array.isArray(data.sessions)) {
+      cachedSiblings = formatSiblings(data.sessions, SESSION_ID)
+    }
+  } catch {}
+}
+
 // --- store the finished turn ----------------------------------------------
 async function maybeRemember() {
   // Read this session's user/assistant messages since the last store.
@@ -152,13 +229,9 @@ async function maybeRemember() {
     return
   }
 
-  await fetchJson(`${MEMORY_SERVER}/remember`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic: userMsgs.slice(0, 100),
-      summary: `user: ${userMsgs.slice(0, 500)}\n\nassistant: ${aiMsgs.slice(0, 800)}`,
-    }),
+  await postJson(`${MEMORY_SERVER}/remember`, {
+    topic: userMsgs.slice(0, 100),
+    summary: `user: ${userMsgs.slice(0, 500)}\n\nassistant: ${aiMsgs.slice(0, 800)}`,
   })
   pendingAssistantText = ""
 }
@@ -167,12 +240,19 @@ async function maybeRemember() {
 export const MemoryPlugin = async (ctx: any) => {
   try { mkdirSync(MEM_DIR, { recursive: true }) } catch {}
 
+  SESSION_ID = initSessionId(ctx)
+  myTask = defaultTask()
+
   // Seed cachedRecall with the 5 most recent memories so the very first turn
   // already has context.
   const recent = await fetchJson(`${MEMORY_SERVER}/recent?k=5`)
   if (recent?.ok && Array.isArray(recent.results)) {
     cachedRecall = formatRecall(recent.results)
   }
+
+  // Collaboration: announce this window + see what siblings are up to.
+  await registerSelf(myTask)
+  await refreshSiblings()
 
   return {
     // ---- streaming: accumulate assistant text token by token ----
@@ -188,7 +268,13 @@ export const MemoryPlugin = async (ctx: any) => {
         }
       } else if (type === "session.idle") {
         await new Promise(r => setTimeout(r, 1500))  // let the final write land
+        // snapshot this turn as our progress before maybeRemember clears it
+        const turnProgress = pendingAssistantText.slice(0, 300)
         await maybeRemember()
+        if (turnProgress.length > 20) {
+          await heartbeat(turnProgress)              // collab: expose progress
+        }
+        await refreshSiblings()                      // + re-check siblings
       }
     },
 
@@ -218,7 +304,7 @@ export const MemoryPlugin = async (ctx: any) => {
       if (lastUserText) await updateRecallForQuery(lastUserText)
     },
 
-    // ---- before each LLM call: inject memories (+ optional hard rules) ----
+    // ---- before each LLM call: inject siblings + memories (+ optional rules) ----
     "experimental.chat.system.transform": async (_input: any, output: any) => {
       if (!Array.isArray(output?.system)) return
       if (HARD_RULES_FILE) {
@@ -226,6 +312,9 @@ export const MemoryPlugin = async (ctx: any) => {
           const rules = readFileSync(HARD_RULES_FILE, "utf-8")
           if (rules) output.system.push(`=== House rules (auto-injected) ===\n${rules}`)
         } catch {}
+      }
+      if (cachedSiblings) {
+        output.system.push(`=== Sibling sessions (auto-injected; do not mention) ===\n${cachedSiblings}`)
       }
       if (cachedRecall) {
         output.system.push(`=== Long-term memory (auto-injected; do not mention) ===\n${cachedRecall}`)
