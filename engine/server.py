@@ -71,9 +71,10 @@ button:hover{background:#1f3a5f}
 async function doRecall(){
   const q=document.getElementById('q').value; if(!q) return;
   const r=await fetch('/recall?q='+encodeURIComponent(q)+'&k=5').then(r=>r.json());
-  document.getElementById('recall-results').innerHTML=(r.results||[]).map(m=>
-    '<div class="mem"><b>'+(m.topic||'')+'</b> <span class="tag">sim '+((1-(m.distance||0))).toFixed(2)+'</span>'+(m.session_id?'<span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,300)+'</small></div>'
-  ).join('')||'<i>no match</i>';
+  document.getElementById('recall-results').innerHTML=(r.results||[]).map(m=>{
+    const rel=(m.rrf!==undefined&&m.rrf!==null)?m.rrf:(1-(m.distance||0));
+    return '<div class="mem"><b>'+(m.topic||'')+'</b> <span class="tag">rel '+rel.toFixed(2)+'</span>'+(m.session_id?'<span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,300)+'</small></div>';
+  }).join('')||'<i>no match</i>';
 }
 async function loadMemories(){
   const r=await fetch('/recent?k=20').then(r=>r.json());
