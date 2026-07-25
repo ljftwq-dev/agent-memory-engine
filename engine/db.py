@@ -56,7 +56,8 @@ def init_db(dim=None, force=False):
                 strength REAL DEFAULT 1.0,
                 tau REAL DEFAULT 7.0,
                 last_recall_ts TEXT,
-                created_ts TEXT NOT NULL
+                created_ts TEXT NOT NULL,
+                session_id TEXT             -- which agent session wrote this (anti cross-talk)
             )
         """)
         conn.execute(f"""

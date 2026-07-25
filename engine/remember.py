@@ -7,10 +7,12 @@ Key features:
 - Auto dedup: if the new summary's nearest neighbor distance <= threshold,
   merge into the existing record (refresh ts, reset strength, tau *= 1.5,
   append raw, replace vector) instead of creating a duplicate.
+- session_id: tags the memory with the agent session that wrote it, so
+  multi-agent collaboration can tell memories apart (anti cross-talk).
 
 CLI:
   python -m engine.remember -t "topic" -s "summary"
-  echo "long text" | python -m engine.remember -t "topic" -s "summary" --summarize
+  echo "long text" | python -m engine.remember -t "topic" -s "summary" --summarize --session-id oc-abc123
 """
 import argparse
 import json
@@ -64,7 +66,7 @@ def _llm_summarize(text):
 
 
 def remember(topic, summary, raw=None, ts=None,
-             dedup=True, dedup_threshold=None, summarize=False):
+             dedup=True, dedup_threshold=None, summarize=False, session_id=None):
     """Store one episodic memory. Returns ``(rowid, action)`` where
     ``action`` is ``"created"`` or ``"merged"``.
 
@@ -72,6 +74,9 @@ def remember(topic, summary, raw=None, ts=None,
     condensed into a semantic sentence used for embedding/storage; the original
     is appended to ``raw``. LLM failure falls back to the original text without
     blocking the store.
+
+    ``session_id`` tags which agent session wrote this memory (anti cross-talk
+    in multi-agent setups). Left None for backward compatibility.
     """
     if dedup_threshold is None:
         dedup_threshold = config.dedup_threshold()
@@ -109,8 +114,9 @@ def remember(topic, summary, raw=None, ts=None,
                         new_raw = old_raw or raw
                     conn.execute(
                         "UPDATE episodic SET ts = ?, topic = ?, summary = ?, "
-                        "raw = ?, strength = 1.0, tau = tau * 1.5 WHERE rowid = ?",
-                        (ts, topic, summary, new_raw, rid),
+                        "raw = ?, strength = 1.0, tau = tau * 1.5, session_id = ? "
+                        "WHERE rowid = ?",
+                        (ts, topic, summary, new_raw, session_id, rid),
                     )
                     conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (rid,))
                     conn.execute(
@@ -123,9 +129,9 @@ def remember(topic, summary, raw=None, ts=None,
                 pass  # dedup query failed -> fall through to normal insert
 
         cur = conn.execute(
-            "INSERT INTO episodic (ts, topic, summary, raw, created_ts) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (ts, topic, summary, raw, ts),
+            "INSERT INTO episodic (ts, topic, summary, raw, created_ts, session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ts, topic, summary, raw, ts, session_id),
         )
         rowid = cur.lastrowid
         conn.execute(
@@ -148,6 +154,7 @@ def main():
     parser.add_argument("--dedup-threshold", type=float)
     parser.add_argument("--summarize", action="store_true",
                         help="call LLM to summarize before storing")
+    parser.add_argument("--session-id", help="which agent session wrote this (anti cross-talk)")
     args = parser.parse_args()
 
     raw = args.raw
@@ -159,7 +166,7 @@ def main():
     rowid, action = remember(
         args.topic, args.summary, raw=raw, ts=args.ts,
         dedup=not args.no_dedup, dedup_threshold=args.dedup_threshold,
-        summarize=args.summarize,
+        summarize=args.summarize, session_id=args.session_id,
     )
     tag = "MERGED into" if action == "merged" else "CREATED"
     print(f"OK {tag} episode #{rowid}")

@@ -99,7 +99,7 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
             """
             SELECT e.rowid, e.ts, e.topic, e.summary, e.raw,
                    e.strength, e.tau, e.last_recall_ts, e.created_ts,
-                   v.distance
+                   e.session_id, v.distance
             FROM episodic_vec v
             JOIN episodic e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -127,7 +127,7 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
                 placeholders = ",".join("?" * len(missing))
                 extra = conn.execute(
                     f"SELECT rowid, ts, topic, summary, raw, strength, tau, "
-                    f"last_recall_ts, created_ts FROM episodic "
+                    f"last_recall_ts, created_ts, session_id FROM episodic "
                     f"WHERE rowid IN ({placeholders})",
                     missing,
                 ).fetchall()

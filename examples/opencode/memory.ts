@@ -131,7 +131,7 @@ function recordMessage(role: string, text: string, source: string, msgId?: strin
   const h = hashStr(norm)
   if (seenTextHashes.has(h)) return false
   seenTextHashes.add(h)
-  log(join(MEM_DIR, "message_log.jsonl"), { role, text_brief: text.slice(0, 1500), source, msg_id: msgId || null })
+  log(join(MEM_DIR, `message_log.${SESSION_ID}.jsonl`), { role, text_brief: text.slice(0, 1500), source, msg_id: msgId || null })
   return true
 }
 
@@ -201,7 +201,7 @@ async function maybeRemember() {
   let userMsgs = ""
   let aiMsgs = pendingAssistantText.trim()
   try {
-    const content = readFileSync(join(MEM_DIR, "message_log.jsonl"), "utf-8")
+    const content = readFileSync(join(MEM_DIR, `message_log.${SESSION_ID}.jsonl`), "utf-8")
     const users: string[] = []
     const ais: string[] = []
     let maxTs = lastRememberedTs
@@ -230,6 +230,7 @@ async function maybeRemember() {
   }
 
   await postJson(`${MEMORY_SERVER}/remember`, {
+    session_id: SESSION_ID,
     topic: userMsgs.slice(0, 100),
     summary: `user: ${userMsgs.slice(0, 500)}\n\nassistant: ${aiMsgs.slice(0, 800)}`,
   })

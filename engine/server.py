@@ -160,6 +160,7 @@ class Handler(BaseHTTPRequestHandler):
                 rowid, action = do_remember(
                     topic=topic, summary=summary, raw=data.get("raw"),
                     ts=data.get("ts"), dedup=dedup, summarize=summarize,
+                    session_id=data.get("session_id"),
                 )
                 self._send(200, {"ok": True, "id": rowid, "action": action,
                                  "topic": topic})

@@ -172,3 +172,20 @@ def test_vector_only_mode_has_no_rrf():
     assert len(results) == 1
     assert "rrf" not in results[0]
     assert "sim" in results[0]
+
+
+def test_remember_tags_session_id():
+    """session_id is stored and surfaced on recall (anti cross-talk in multi-agent)."""
+    rid, action = remember(topic="t", summary="python pytest session tag test",
+                           session_id="oc-abc")
+    assert action == "created"
+    results = recall("python pytest session tag test", top_k=3)
+    assert len(results) == 1
+    assert results[0]["session_id"] == "oc-abc"
+
+
+def test_remember_without_session_id_is_null():
+    """Memories written without session_id are None (backward compatible)."""
+    remember(topic="t", summary="no session marker here at all")
+    results = recall("no session marker here at all", top_k=3)
+    assert results[0]["session_id"] is None
