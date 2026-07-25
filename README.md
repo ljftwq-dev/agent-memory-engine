@@ -1,0 +1,146 @@
+# Agent Memory Engine
+
+A **long-term memory engine** for coding agents (opencode / claude-code / any
+HTTP-speaking agent). Lets an agent "remember" past sessions across restarts:
+each new turn auto-recalls related history, each finished turn auto-stores a new
+memory.
+
+> Inspired by SJTU's [MemRL paper](https://arxiv.org/abs/2601.03192), with an
+> engineering tradeoff: borrow its **two-stage retrieval + gating**, drop the
+> full RL (dialogue has no clean reward signal - see [design.md](docs/design.md)).
+
+---
+
+## Why it (differs from Mem0 / Chroma)
+
+Most memory layers do **pure semantic recall** - nearest neighbors go straight
+into the prompt. This engine is different:
+
+| Feature | What it buys you |
+|---|---|
+| 🔍 **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
+| 📝 **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
+| 📉 **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
+| 🪶 **Single SQLite file** | Structured data + vector index in one `.db`. No separate vector server, no extra process - just copy the file. |
+| 🔌 **Agent & LLM agnostic** | Plain HTTP. Default embedder is BGE-m3 (local, free); LLM summary uses any OpenAI-compatible endpoint (GLM / OpenAI / Ollama). |
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/ljftwq-dev/agent-memory-engine
+cd agent-memory-engine
+pip install -e ".[all]"        # core + real embeddings + dev deps
+cp .env.example .env           # adjust if needed (defaults work out of the box)
+
+python -m engine.server        # start HTTP server (default :8765)
+```
+
+The engine works in two modes:
+
+- **No embedding model installed** → automatic hash-fallback (deterministic,
+  reproducible, *no real semantics*). Great for trying the API, bad for recall
+  quality. To get real semantics install the `[embed]` extra (BGE-m3).
+- **BGE-m3 installed** → full multilingual semantic embeddings.
+
+Any agent talks to it over HTTP:
+
+```
+GET  /health                 service status
+GET  /recall?q=&k=3          two-stage semantic recall (the core)
+GET  /recent?k=5             latest k memories (by time)
+GET  /search?q=              keyword LIKE match
+POST /remember               store a memory {topic, summary, raw?, ...}
+POST /forget                 run an Ebbinghaus decay pass {purge?, threshold?}
+```
+
+Want LLM summarization? Set `AME_LLM_BASE_URL` + `AME_LLM_API_KEY` in `.env`
+(any OpenAI-compatible endpoint). Leave them empty and it's a pure retrieval
+engine - still fully usable.
+
+Seed some demo data and try it:
+
+```bash
+python examples/seed_demo.py
+python -m engine.recall "vector search" -k 3
+```
+
+---
+
+## Repository layout
+
+```
+agent-memory-engine/
+├── engine/            core engine
+│   ├── config.py      .env / env-var loader (no hardcoded paths)
+│   ├── db.py          SQLite + sqlite-vec schema
+│   ├── embed.py       BGE-m3 embedder + hash fallback
+│   ├── recall.py      ⭐ two-stage retrieval + gating (core)
+│   ├── remember.py    store + optional LLM summary + dedup-merge
+│   ├── forget.py      Ebbinghaus decay loop (nightly cron)
+│   └── server.py      stdlib HTTP server
+├── examples/
+│   ├── seed_demo.py              load generic demo data
+│   └── opencode/memory.ts        reference opencode plugin (inject + recall + store)
+├── tests/
+│   ├── conftest.py               temp DB + forced hash fallback (CI-friendly)
+│   └── test_recall.py            gating / dedup / decay / reinforcement tests
+└── docs/
+    ├── architecture.md           four-layer memory model + module map
+    └── design.md                 why two-stage, why no full RL
+```
+
+---
+
+## How the design works (in one paragraph)
+
+**Problem**: pure semantic match causes *context pollution* - "semantically
+close" ≠ "useful", so you shovel adjacent junk into the prompt.
+**Solution (wide in, strict out)**:
+1. **Gate only kills pure noise** (distance > threshold).
+2. **Rerank decides relevance**: `score = α·strength + (1-α)·sim`, take top-k.
+3. **`strength` is lightweight utility**: Ebbinghaus `exp(-Δt/τ)`, where each
+   recall does `τ *= 1.5`. Frequently-recalled memories stay strong. This
+   replaces MemRL's Q-value without needing reward data.
+4. **No full RL**: dialogue has no clean reward signal; a fabricated proxy adds
+   more noise than the Q-value is worth.
+
+Full writeup: [`docs/design.md`](docs/design.md).
+
+---
+
+## Configuration (`.env`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `AME_DB_PATH` | `~/.agent-memory/memory.db` | database path |
+| `AME_EMBED_MODEL` | `BAAI/bge-m3` | embedding model (local & free) |
+| `AME_EMBED_DIM` | `1024` | vector dim (must match the model) |
+| `AME_LLM_BASE_URL` | (empty = off) | OpenAI-compatible API base |
+| `AME_LLM_API_KEY` | (empty) | LLM key |
+| `AME_LLM_MODEL` | `glm-4-flash` | model name for summarization |
+| `AME_RECALL_THRESHOLD` | `0.9` | distance gate (larger = looser) |
+| `AME_RECALL_POOL` | `15` | stage-A wide recall count |
+| `AME_ALPHA` | `0.5` | strength weight in rerank (0..1) |
+| `AME_MIN_STRENGTH` | `0.05` | drop memories below this real-time strength |
+| `AME_DEDUP_THRESHOLD` | `0.45` | on store, distance ≤ this merges into existing |
+
+---
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+Tests run on the hash-fallback embedder (no model download) so they're fast and
+CI-friendly. They cover: create, exact-match recall, gating, dedup-merge,
+Ebbinghaus decay, recall-time reinforcement, and vector-dim consistency.
+
+---
+
+## License
+
+MIT

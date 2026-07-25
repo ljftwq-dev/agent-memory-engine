@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-memory-engine"
+version = "0.1.0"
+description = "Two-stage retrieval + gating long-term memory engine for coding agents."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [{name = "ljftwq-dev", email = "ljftwq-dev@users.noreply.github.com"}]
+keywords = ["agent", "memory", "llm", "rag", "vector-search", "sqlite", "coding-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "sqlite-vec>=0.1.1",
+    "numpy>=1.21",
+]
+
+[project.optional-dependencies]
+# Real semantic embedding (default model: BGE-m3). Optional because the engine
+# still runs (with a hash fallback, no real semantics) without it.
+embed = [
+    "sentence-transformers>=2.2",
+    "modelscope>=1.10",
+]
+# LLM summarization uses only the stdlib urllib, no extra deps needed.
+dev = ["pytest>=7.0"]
+all = [
+    "sentence-transformers>=2.2",
+    "modelscope>=1.10",
+    "pytest>=7.0",
+]
+
+[project.scripts]
+agent-memory = "engine.server:main"
+
+[project.urls]
+Homepage = "https://github.com/ljftwq-dev/agent-memory-engine"
+Issues = "https://github.com/ljftwq-dev/agent-memory-engine/issues"
+
+[tool.setuptools]
+packages = ["engine"]
