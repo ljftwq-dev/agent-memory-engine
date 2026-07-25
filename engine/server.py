@@ -35,6 +35,63 @@ from .remember import remember as do_remember
 from .forget import decay_all
 
 
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Agent Memory Engine</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:20px;background:#f6f8fa;color:#24292e}
+h1{color:#1f3a5f;margin-bottom:4px}
+.sub{color:#6a737d;margin-top:0}
+.card{background:#fff;border:1px solid #d0d7de;border-radius:6px;padding:16px;margin-bottom:16px}
+.card h3{margin-top:0}
+input[type=text]{padding:8px;width:70%;border:1px solid #d0d7de;border-radius:4px;font-size:14px}
+button{padding:8px 14px;background:#2e5c8a;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:13px}
+button:hover{background:#1f3a5f}
+.mem{padding:8px;border-bottom:1px solid #eee}
+.mem small{color:#6a737d}
+.sess{padding:6px;border-left:3px solid #2e5c8a;margin-bottom:6px;padding-left:10px}
+.tag{display:inline-block;background:#ddf4ff;color:#0969da;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:4px}
+</style></head><body>
+<h1>Agent Memory Engine</h1>
+<p class="sub">dashboard · <a href="https://github.com/ljftwq-dev/agent-memory-engine" target="_blank">github</a></p>
+<div class="card">
+  <h3>Recall</h3>
+  <input id="q" type="text" placeholder="query... e.g. 'vector search'">
+  <button onclick="doRecall()">recall</button>
+  <div id="recall-results" style="margin-top:10px"></div>
+</div>
+<div class="card">
+  <h3>Recent memories <button onclick="loadMemories()" style="float:right">refresh</button></h3>
+  <div id="memories"></div>
+</div>
+<div class="card">
+  <h3>Active sessions (multi-agent) <button onclick="loadSessions()" style="float:right">refresh</button></h3>
+  <div id="sessions"></div>
+</div>
+<script>
+async function doRecall(){
+  const q=document.getElementById('q').value; if(!q) return;
+  const r=await fetch('/recall?q='+encodeURIComponent(q)+'&k=5').then(r=>r.json());
+  document.getElementById('recall-results').innerHTML=(r.results||[]).map(m=>
+    '<div class="mem"><b>'+(m.topic||'')+'</b> <span class="tag">sim '+((1-(m.distance||0))).toFixed(2)+'</span>'+(m.session_id?'<span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,300)+'</small></div>'
+  ).join('')||'<i>no match</i>';
+}
+async function loadMemories(){
+  const r=await fetch('/recent?k=20').then(r=>r.json());
+  document.getElementById('memories').innerHTML=(r.results||[]).map(m=>
+    '<div class="mem"><b>'+(m.topic||'')+'</b> <small>'+(m.ts||'').slice(0,16)+'</small>'+(m.session_id?' <span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,200)+'</small></div>'
+  ).join('')||'<i>empty</i>';
+}
+async function loadSessions(){
+  const r=await fetch('/sessions/active').then(r=>r.json());
+  document.getElementById('sessions').innerHTML=(r.sessions||[]).map(s=>
+    '<div class="sess"><b>'+(s.task||'')+'</b> <span class="tag">'+(s.session_id||'')+'</span><br><small>'+(s.progress||'')+'</small></div>'
+  ).join('')||'<i>no active sessions</i>';
+}
+loadMemories();loadSessions();
+</script></body></html>
+"""
+
+
 def get_recent(k=5):
     conn = db.get_conn()
     try:
@@ -74,6 +131,14 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code, msg):
         self._send(code, {"ok": False, "error": msg})
 
+    def _send_html(self, html):
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -85,6 +150,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             url = urlparse(self.path)
             qs = parse_qs(url.query)
+
+            if url.path in ("/", "/ui"):
+                self._send_html(DASHBOARD_HTML)
+                return
 
             if url.path == "/health":
                 self._send(200, {
