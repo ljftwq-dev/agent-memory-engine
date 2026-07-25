@@ -5,12 +5,16 @@ Uses the standard library http.server (no FastAPI/Flask dependency).
 Default bind: 127.0.0.1:8765 (localhost only, safe).
 
 Endpoints:
-  GET  /health            service status (embed mode/dim, db path, llm on/off)
-  GET  /recall?q=&k=3     two-stage semantic recall, top-k
-  GET  /recent?k=5        latest k memories (by time, desc)
-  GET  /search?q=         keyword LIKE match
-  POST /remember          {topic, summary, raw?, dedup?, summarize?}
-  POST /forget            {purge?, threshold?} -> run a decay pass
+  GET  /health              service status (embed mode/dim, db path, llm on/off)
+  GET  /recall?q=&k=3       two-stage semantic recall, top-k
+  GET  /recent?k=5          latest k memories (by time, desc)
+  GET  /search?q=           keyword LIKE match
+  GET  /sessions/active     other agents' current tasks (multi-agent collab)
+  POST /remember            {topic, summary, raw?, dedup?, summarize?}
+  POST /forget              {purge?, threshold?} -> run a decay pass
+  POST /session/register    {session_id, task}
+  POST /session/heartbeat   {session_id, progress?, task?}
+  POST /session/finish      {session_id, result?}
 
 Run:
   python -m engine.server
@@ -123,6 +127,12 @@ class Handler(BaseHTTPRequestHandler):
                                  "results": results})
                 return
 
+            if url.path == "/sessions/active":
+                sessions = db.list_active_sessions()
+                self._send(200, {"ok": True, "count": len(sessions),
+                                 "sessions": sessions})
+                return
+
             self._err(404, f"unknown path: {url.path}")
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e),
@@ -162,6 +172,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, **r})
                 return
 
+            if url.path == "/session/register":
+                sid = (data.get("session_id") or "").strip()
+                task = (data.get("task") or "").strip()
+                if not sid or not task:
+                    self._err(400, "missing 'session_id' or 'task'")
+                    return
+                db.register_session(sid, task)
+                self._send(200, {"ok": True, "session_id": sid, "task": task})
+                return
+
+            if url.path == "/session/heartbeat":
+                sid = (data.get("session_id") or "").strip()
+                if not sid:
+                    self._err(400, "missing 'session_id'")
+                    return
+                ok = db.heartbeat_session(
+                    sid, progress=data.get("progress"), task=data.get("task"),
+                )
+                if not ok:
+                    self._err(404, f"unknown session_id: {sid} (register first)")
+                    return
+                self._send(200, {"ok": True, "session_id": sid})
+                return
+
+            if url.path == "/session/finish":
+                sid = (data.get("session_id") or "").strip()
+                if not sid:
+                    self._err(400, "missing 'session_id'")
+                    return
+                ok = db.finish_session(sid, result=data.get("result"))
+                if not ok:
+                    self._err(404, f"unknown session_id: {sid}")
+                    return
+                self._send(200, {"ok": True, "session_id": sid, "status": "finished"})
+                return
+
             self._err(404, f"unknown path: {url.path}")
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e),
@@ -195,8 +241,12 @@ def main():
     print("    GET  /recall?q=...&k=3")
     print("    GET  /recent?k=5")
     print("    GET  /search?q=...")
+    print("    GET  /sessions/active")
     print("    POST /remember")
     print("    POST /forget")
+    print("    POST /session/register   {session_id, task}")
+    print("    POST /session/heartbeat  {session_id, progress?, task?}")
+    print("    POST /session/finish     {session_id, result?}")
     print("=" * 60)
     print("  Ctrl+C to stop\n")
     try:

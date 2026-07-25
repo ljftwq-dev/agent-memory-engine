@@ -21,6 +21,7 @@ DEFAULTS = {
     "DEDUP_THRESHOLD": "0.45",   # distance <= this => merge into existing memory
     "HYBRID_ENABLE": "1",        # 1 = vector+BM25 hybrid recall, 0 = vector only
     "BM25_POOL": "15",           # stage-A BM25 recall count (hybrid mode)
+    "SESSION_TIMEOUT_HOURS": "2",  # session goes stale after this long w/o heartbeat
 }
 
 _loaded = False
@@ -119,3 +120,7 @@ def hybrid_enable():
 
 def bm25_pool():
     return int(get("BM25_POOL"))
+
+
+def session_timeout_hours():
+    return float(get("SESSION_TIMEOUT_HOURS"))

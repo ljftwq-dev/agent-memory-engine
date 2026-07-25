@@ -20,6 +20,7 @@ into the prompt. This engine is different:
 |---|---|
 | **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
 | **Hybrid recall (vector + BM25)** | Vector KNN for semantic match + FTS5 BM25 for keyword match, fused via RRF. Catches keyword hits the vector path alone would miss. Disable with `AME_HYBRID_ENABLE=0`. |
+| **Multi-agent collaboration** | Sessions register their current task; siblings see "who's doing what" via `GET /sessions/active`. A fast-finishing agent can pick up a sibling's in-progress work without you writing a handoff doc. |
 | **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
 | **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
 | **Single SQLite file** | Structured data + vector index in one `.db`. No separate vector server, no extra process - just copy the file. |
@@ -128,6 +129,7 @@ Full writeup: [`docs/design.md`](docs/design.md).
 | `AME_DEDUP_THRESHOLD` | `0.45` | on store, distance ≤ this merges into existing |
 | `AME_HYBRID_ENABLE` | `1` | vector + BM25 hybrid recall (0 = vector only) |
 | `AME_BM25_POOL` | `15` | stage-A BM25 recall count (hybrid mode) |
+| `AME_SESSION_TIMEOUT_HOURS` | `2` | session goes stale after this long w/o heartbeat |
 
 ---
 

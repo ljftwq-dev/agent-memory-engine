@@ -7,9 +7,13 @@ One .db file holds both structured metadata and the vector index
 - ``episodic_vec`` virtual table: vec0 index (FLOAT[dim]), joined to episodic by rowid
 - ``episodic_fts`` virtual table: FTS5 full-text index over (topic, summary),
   used by the BM25 branch of hybrid recall. Auto-created if FTS5 is available.
+- ``session`` table: registry of active agent sessions for multi-agent
+  collaboration (each opencode/agent registers its current task so siblings
+  can see what the others are doing).
 """
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 import sqlite_vec
 
@@ -41,6 +45,7 @@ def init_db(dim=None, force=False):
             conn.execute("DROP TABLE IF EXISTS episodic")
             conn.execute("DROP TABLE IF EXISTS episodic_vec")
             conn.execute("DROP TABLE IF EXISTS episodic_fts")
+            conn.execute("DROP TABLE IF EXISTS session")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS episodic (
                 rowid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +65,19 @@ def init_db(dim=None, force=False):
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic(ts)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS session (
+                session_id  TEXT PRIMARY KEY,
+                task        TEXT NOT NULL,
+                progress    TEXT,
+                status      TEXT DEFAULT 'active',
+                started_ts  TEXT NOT NULL,
+                updated_ts  TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_updated ON session(updated_ts)"
+        )
         if fts5_available():
             init_fts(conn)
         conn.commit()
@@ -139,7 +157,6 @@ def init_fts(conn):
             VALUES (new.rowid, new.topic, new.summary);
         END;
     """)
-    # backfill if FTS is empty but episodic has rows (e.g. FTS added later)
     n = conn.execute("SELECT COUNT(*) FROM episodic_fts").fetchone()[0]
     if n == 0:
         conn.execute(
@@ -181,6 +198,101 @@ def _fts_tokenize(text):
     toks = re.findall(r"[a-z0-9]+", text)
     toks += re.findall(r"[\u4e00-\u9fff]", text)
     return toks
+
+
+# ---------------------------------------------------------------------------
+# Session registry (multi-agent collaboration)
+# ---------------------------------------------------------------------------
+# Each running agent (an opencode window, a claude-code session, ...) registers
+# here so its siblings can see "who is doing what, how far along". This is the
+# shared "working state" layer on top of the shared "episodic memory" layer.
+
+def register_session(session_id, task):
+    """Register a session, or re-register with a new task (re-activates it)."""
+    conn = get_conn()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        conn.execute(
+            "INSERT INTO session (session_id, task, progress, status, "
+            "started_ts, updated_ts) VALUES (?, ?, NULL, 'active', ?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET "
+            "task=excluded.task, status='active', updated_ts=excluded.updated_ts",
+            (session_id, task, now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def heartbeat_session(session_id, progress=None, task=None):
+    """Refresh a session's liveness; optionally update task/progress.
+
+    Returns False if the session_id is unknown (not registered).
+    """
+    conn = get_conn()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        cur = conn.execute(
+            "UPDATE session SET updated_ts = ?, status = 'active' "
+            "WHERE session_id = ?", (now, session_id),
+        )
+        if cur.rowcount == 0:
+            return False
+        if task is not None:
+            conn.execute("UPDATE session SET task = ? WHERE session_id = ?",
+                         (task, session_id))
+        if progress is not None:
+            conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
+                         (progress, session_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def finish_session(session_id, result=None):
+    """Mark a session finished; optionally stash a result summary in progress.
+
+    Returns False if the session_id is unknown.
+    """
+    conn = get_conn()
+    now = datetime.now().isoformat(timespec="seconds")
+    try:
+        cur = conn.execute(
+            "UPDATE session SET status = 'finished', updated_ts = ? "
+            "WHERE session_id = ?", (now, session_id),
+        )
+        if cur.rowcount == 0:
+            return False
+        if result is not None:
+            conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
+                         (result, session_id))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def list_active_sessions(timeout_hours=None):
+    """All active sessions with a heartbeat newer than ``now - timeout``.
+
+    Sessions silent longer than the timeout are treated as stale and excluded.
+    Defaults to ``config.SESSION_TIMEOUT_HOURS``.
+    """
+    if timeout_hours is None:
+        timeout_hours = config.session_timeout_hours()
+    cutoff = (datetime.now() - timedelta(hours=timeout_hours)).isoformat(timespec="seconds")
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT session_id, task, progress, status, started_ts, updated_ts "
+            "FROM session WHERE status = 'active' AND updated_ts >= ? "
+            "ORDER BY updated_ts DESC",
+            (cutoff,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
