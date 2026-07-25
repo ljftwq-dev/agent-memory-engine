@@ -34,6 +34,12 @@ into the prompt. This engine is different:
 
 ## Quick start
 
+**From PyPI:**
+```bash
+pip install agent-memory-engine-ljf
+```
+
+**From source:**
 ```bash
 git clone https://github.com/ljftwq-dev/agent-memory-engine
 cd agent-memory-engine
