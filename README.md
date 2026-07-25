@@ -18,11 +18,11 @@ into the prompt. This engine is different:
 
 | Feature | What it buys you |
 |---|---|
-| 🔍 **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
-| 📝 **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
-| 📉 **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
-| 🪶 **Single SQLite file** | Structured data + vector index in one `.db`. No separate vector server, no extra process - just copy the file. |
-| 🔌 **Agent & LLM agnostic** | Plain HTTP. Default embedder is BGE-m3 (local, free); LLM summary uses any OpenAI-compatible endpoint (GLM / OpenAI / Ollama). |
+| **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
+| **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
+| **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
+| **Single SQLite file** | Structured data + vector index in one `.db`. No separate vector server, no extra process - just copy the file. |
+| **Agent & LLM agnostic** | Plain HTTP. Default embedder is BGE-m3 (local, free); LLM summary uses any OpenAI-compatible endpoint (GLM / OpenAI / Ollama). |
 
 ---
 
@@ -76,7 +76,7 @@ agent-memory-engine/
 │   ├── config.py      .env / env-var loader (no hardcoded paths)
 │   ├── db.py          SQLite + sqlite-vec schema
 │   ├── embed.py       BGE-m3 embedder + hash fallback
-│   ├── recall.py      ⭐ two-stage retrieval + gating (core)
+│   ├── recall.py      two-stage retrieval + gating (core)
 │   ├── remember.py    store + optional LLM summary + dedup-merge
 │   ├── forget.py      Ebbinghaus decay loop (nightly cron)
 │   └── server.py      stdlib HTTP server
