@@ -37,9 +37,31 @@ config.py     reads .env / env vars; every knob lives here (no hardcoded paths)
 db.py         connection + schema init; vec0 table; dim detection
 embed.py      singleton embedder (BGE-m3 by default); deterministic hash fallback
 recall.py     two-stage retrieval + gating + Ebbinghaus strength     [the core]
+reranker.py   optional cross-encoder (bge-reranker-v2-m3); lazy + graceful fallback
 remember.py   store with optional LLM summary + automatic dedup-merge
 forget.py     nightly decay loop; optional purge of weak memories
 server.py     stdlib HTTP server exposing recall/remember/recent/search/forget
+```
+
+## Retrieval pipeline
+
+```
+query
+  │
+  ├── Stage A (wide recall) ──┐
+  │     vector KNN (pool=15)  │── candidates (~dozens)
+  │     BM25/FTS5 (pool=15)   │     each with distance + keyword rank
+  │                           │
+  ├── Gate : drop distance > threshold (BM25 hits bypass)
+  │
+  ├── Fuse : RRF merges vector + BM25 rankings -> rrf in [0,1]
+  │
+  ├── Rerank (optional) : cross-encoder re-scores (query, candidate)
+  │                        pairs -> replaces rrf with a precise score
+  │                        (off by default; skipped if model unavailable)
+  │
+  └── Score : score = alpha*strength + (1-alpha)*relevance ; take top-k
+              strength_now = exp(-dt/tau)   (real-time Ebbinghaus decay)
 ```
 
 ## Data flow (one turn)

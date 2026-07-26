@@ -25,6 +25,7 @@ into the prompt. This engine is different:
 |---|---|
 | **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
 | **Hybrid recall (vector + BM25)** | Vector KNN for semantic match + FTS5 BM25 for keyword match, fused via RRF. Catches keyword hits the vector path alone would miss. Disable with `AME_HYBRID_ENABLE=0`. |
+| **Cross-encoder rerank (optional)** | After hybrid fusion, a cross-encoder (bge-reranker-v2-m3) re-scores `(query, candidate)` pairs for precise relevance — the classic two-stage IR pattern (cheap wide recall → expensive precise rerank). Off by default; gracefully skipped if the model isn't loaded. Enable with `AME_RERANKER_ENABLE=1`. |
 | **Multi-agent collaboration** | Sessions register their current task; siblings see "who's doing what" via `GET /sessions/active`. A fast-finishing agent can pick up a sibling's in-progress work without you writing a handoff doc. |
 | **LLM summarization** | Optionally condenses each turn into a semantic sentence *before* embedding (better retrieval than raw dialogue). Falls back to raw text if no LLM is configured. |
 | **Ebbinghaus decay** | Frequently-recalled memories decay slower (`τ *= 1.5` per recall). Long-unused ones naturally fade. Use-it-or-lose-it, no RL training needed. |
@@ -90,6 +91,7 @@ agent-memory-engine/
 │   ├── db.py          SQLite + sqlite-vec schema
 │   ├── embed.py       BGE-m3 embedder + hash fallback
 │   ├── recall.py      two-stage retrieval + gating (core)
+│   ├── reranker.py    optional cross-encoder precision rerank
 │   ├── remember.py    store + optional LLM summary + dedup-merge
 │   ├── forget.py      Ebbinghaus decay loop (nightly cron)
 │   └── server.py      stdlib HTTP server
@@ -98,7 +100,8 @@ agent-memory-engine/
 │   └── opencode/memory.ts        reference opencode plugin (inject + recall + store)
 ├── tests/
 │   ├── conftest.py               temp DB + forced hash fallback (CI-friendly)
-│   └── test_recall.py            gating / dedup / decay / reinforcement tests
+│   ├── test_recall.py            gating / dedup / decay / reinforcement tests
+│   └── test_reranker.py          rerank fallback / mock-promote tests
 └── docs/
     ├── architecture.md           four-layer memory model + module map
     └── design.md                 why two-stage, why no full RL
@@ -112,7 +115,7 @@ agent-memory-engine/
 close" ≠ "useful", so you shovel adjacent junk into the prompt.
 **Solution (wide in, strict out)**:
 1. **Gate only kills pure noise** (distance > threshold). In hybrid mode, BM25 hits bypass the gate.
-2. **Rerank decides relevance**: in hybrid mode relevance = RRF-fused vector + BM25 rank; otherwise `sim = 1 - distance`. Final `score = α·strength + (1-α)·relevance`, take top-k.
+2. **Fuse + rerank decides relevance**: in hybrid mode relevance = RRF-fused vector + BM25 rank; otherwise `sim = 1 - distance`. If the cross-encoder reranker is on, it replaces that relevance with a precise `(query, candidate)` score. Final `score = α·strength + (1-α)·relevance`, take top-k.
 3. **`strength` is lightweight utility**: Ebbinghaus `exp(-Δt/τ)`, where each
    recall does `τ *= 1.5`. Frequently-recalled memories stay strong. This
    replaces MemRL's Q-value without needing reward data.
@@ -140,6 +143,9 @@ Full writeup: [`docs/design.md`](docs/design.md).
 | `AME_DEDUP_THRESHOLD` | `0.45` | on store, distance ≤ this merges into existing |
 | `AME_HYBRID_ENABLE` | `1` | vector + BM25 hybrid recall (0 = vector only) |
 | `AME_BM25_POOL` | `15` | stage-A BM25 recall count (hybrid mode) |
+| `AME_RERANKER_ENABLE` | `0` | cross-encoder precision rerank after fusion (opt-in) |
+| `AME_RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | cross-encoder model (multilingual) |
+| `AME_RERANKER_POOL` | `20` | how many fused candidates to cross-encoder rerank |
 | `AME_SESSION_TIMEOUT_HOURS` | `2` | session goes stale after this long w/o heartbeat |
 
 ---
@@ -153,7 +159,8 @@ pytest -q
 
 Tests run on the hash-fallback embedder (no model download) so they're fast and
 CI-friendly. They cover: create, exact-match recall, gating, dedup-merge,
-Ebbinghaus decay, recall-time reinforcement, and vector-dim consistency.
+Ebbinghaus decay, recall-time reinforcement, vector-dim consistency, hybrid
+RRF rescue/normalization, and the reranker fallback + mock-promote behavior.
 
 ---
 

@@ -31,6 +31,12 @@ embed = [
     "sentence-transformers>=2.2",
     "modelscope>=1.10",
 ]
+# Cross-encoder precision rerank (default model: bge-reranker-v2-m3). Sits after
+# hybrid fusion in recall; gracefully skipped if the model isn't loaded.
+reranker = [
+    "sentence-transformers>=2.2",
+    "modelscope>=1.10",
+]
 # LLM summarization uses only the stdlib urllib, no extra deps needed.
 dev = ["pytest>=7.0"]
 all = [

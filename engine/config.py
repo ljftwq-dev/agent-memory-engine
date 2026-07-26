@@ -21,6 +21,9 @@ DEFAULTS = {
     "DEDUP_THRESHOLD": "0.45",   # distance <= this => merge into existing memory
     "HYBRID_ENABLE": "1",        # 1 = vector+BM25 hybrid recall, 0 = vector only
     "BM25_POOL": "15",           # stage-A BM25 recall count (hybrid mode)
+    "RERANKER_ENABLE": "0",      # 1 = cross-encoder precision rerank after hybrid fusion
+    "RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",   # multilingual cross-encoder
+    "RERANKER_POOL": "20",       # how many fused candidates to cross-encoder rerank
     "SESSION_TIMEOUT_HOURS": "2",  # session goes stale after this long w/o heartbeat
 }
 
@@ -120,6 +123,18 @@ def hybrid_enable():
 
 def bm25_pool():
     return int(get("BM25_POOL"))
+
+
+def reranker_enable():
+    return get("RERANKER_ENABLE") in ("1", "true", "yes", "on")
+
+
+def reranker_model():
+    return get("RERANKER_MODEL")
+
+
+def reranker_pool():
+    return int(get("RERANKER_POOL"))
 
 
 def session_timeout_hours():

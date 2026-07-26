@@ -19,6 +19,7 @@ _TMP = tempfile.mkdtemp(prefix="ame_test_")
 os.environ["AME_DB_PATH"] = os.path.join(_TMP, "test.db")
 os.environ["AME_EMBED_MODEL"] = "__nonexistent_model_for_test__"
 os.environ["AME_EMBED_DIM"] = "64"          # small = fast hash vectors
+os.environ["AME_RERANKER_MODEL"] = "__nonexistent_reranker_for_test__"  # fail fast, no network
 os.environ["AME_LLM_BASE_URL"] = ""
 os.environ["AME_LLM_API_KEY"] = ""
 # Force HF offline so sentence-transformers fails fast (no network wait) and

@@ -8,17 +8,24 @@ Pipeline (hybrid mode, the default):
   Gating : drop vector candidates whose distance > threshold. BM25-only
            candidates bypass the distance gate (they're the whole point of
            hybrid recall - catch keyword matches the vector path missed).
-  Rerank : Reciprocal Rank Fusion (RRF) merges the two rankings into one
-           relevance score in [0, 1]; final ``score = α·strength + (1-α)·rel``.
-           ``strength_now = exp(-dt/τ)`` is the real-time Ebbinghaus decay.
+  Fuse   : Reciprocal Rank Fusion (RRF) merges the two rankings into one
+           relevance score in [0, 1].
+  Rerank : (optional) a cross-encoder (bge-reranker-v2-m3) re-scores the top
+           ``reranker_pool`` candidates with the query and replaces the RRF
+           relevance. Disabled by default; gracefully skipped if the model
+           isn't loaded (keeps RRF). This is the classic two-stage IR pattern:
+           cheap wide recall -> expensive precise rerank.
+  Score  : ``score = a*strength + (1-a)*rel`` where ``rel`` is the reranker
+           score when on, else RRF; ``strength_now = exp(-dt/tau)`` is the
+           real-time Ebbinghaus decay.
 
-RRF replaces the old ``sim = 1 - distance`` as the relevance term. Pure-vector
-mode (``hybrid=False``) keeps the original single-branch behavior.
+Pure-vector mode (``hybrid=False``) keeps the original single-branch behavior.
 
 CLI:
   python -m engine.recall "query"
   python -m engine.recall "vector search" -k 3 --json
   python -m engine.recall "keyword" --no-hybrid     # vector-only mode
+  python -m engine.recall "python pandas" --rerank   # cross-encoder precision rerank
 """
 import argparse
 import json
@@ -65,12 +72,14 @@ def _bm25_recall(conn, query, k):
 
 
 def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
-           recall_pool=None, alpha=None, hybrid=None, bm25_pool=None):
+           recall_pool=None, alpha=None, hybrid=None, bm25_pool=None, rerank=None):
     """Hybrid retrieval, returns up to ``top_k`` dicts.
 
     Each result additionally carries: ``strength_now``, ``score``, and either
-    ``sim`` (pure-vector mode) or ``rrf`` (hybrid mode). Any of the tuning
-    args left as None uses the configured default.
+    ``sim`` (pure-vector mode) or ``rrf`` (hybrid mode). When the optional
+    cross-encoder reranker is on, results also carry ``rerank`` (the
+    cross-encoder's [0,1] relevance). Any of the tuning args left as None uses
+    the configured default.
     """
     if not os.path.exists(config.db_path()):
         return []
@@ -87,6 +96,8 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
         hybrid = config.hybrid_enable()
     if bm25_pool is None:
         bm25_pool = config.bm25_pool()
+    if rerank is None:
+        rerank = config.reranker_enable()
 
     conn = db.get_conn()
     try:
@@ -179,6 +190,22 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
             d["score"] = alpha * s_now + (1.0 - alpha) * rel
             candidates.append(d)
 
+        # ---- optional cross-encoder precision rerank ----
+        # Re-score the most promising candidates with a heavy cross-encoder and
+        # replace the fused relevance. Classic two-stage IR: cheap wide recall
+        # above, expensive precise rerank here. Skipped (keeps RRF/sim) when the
+        # reranker is disabled or its model isn't available.
+        if rerank and candidates:
+            from . import reranker as _rerank_mod
+            pool_r = max(config.reranker_pool(), top_k)
+            pre_sort = sorted(candidates, key=lambda x: x["score"], reverse=True)[:pool_r]
+            ce_scores = _rerank_mod.rerank(query, pre_sort)
+            if ce_scores is not None:
+                for c, rel_ce in zip(pre_sort, ce_scores):
+                    c["rerank"] = rel_ce
+                    c["sim"] = rel_ce                       # upgraded relevance signal
+                    c["score"] = alpha * c["strength_now"] + (1.0 - alpha) * rel_ce
+
         candidates.sort(key=lambda x: x["score"], reverse=True)
         results = candidates[:top_k]
 
@@ -203,8 +230,15 @@ def _format(results, fmt="text", hybrid=True):
         return "(no match)"
     lines = []
     for i, r in enumerate(results, 1):
-        rel = r.get("rrf", r.get("sim", 0.0))
-        rel_tag = "rrf" if (hybrid and "rrf" in r) else "sim"
+        if "rerank" in r:
+            rel = r["rerank"]
+            rel_tag = "rerank"
+        elif hybrid and "rrf" in r:
+            rel = r["rrf"]
+            rel_tag = "rrf"
+        else:
+            rel = r.get("sim", 0.0)
+            rel_tag = "sim"
         score = r.get("score", rel)
         ts_short = (r["ts"] or "")[:16].replace("T", " ")
         s_now = r.get("strength_now", 1.0)
@@ -227,6 +261,8 @@ def main():
     parser.add_argument("--hybrid", action=argparse.BooleanOptionalAction, default=None,
                         help="enable/disable vector+BM25 hybrid recall (default: config)")
     parser.add_argument("--bm25-pool", type=int)
+    parser.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=None,
+                        help="enable/disable cross-encoder precision rerank (default: config)")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--update", action="store_true",
                         help="update last_recall/strength after recall (use-it-or-lose-it)")
@@ -236,7 +272,7 @@ def main():
         args.query, top_k=args.top_k, threshold=args.threshold,
         update=args.update, min_strength=args.min_strength,
         recall_pool=args.recall_pool, alpha=args.alpha,
-        hybrid=args.hybrid, bm25_pool=args.bm25_pool,
+        hybrid=args.hybrid, bm25_pool=args.bm25_pool, rerank=args.rerank,
     )
     is_hybrid = args.hybrid if args.hybrid is not None else config.hybrid_enable()
     print(_format(results, "json" if args.json else "text", hybrid=is_hybrid))
