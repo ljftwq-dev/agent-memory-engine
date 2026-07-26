@@ -37,16 +37,23 @@ reranker = [
     "sentence-transformers>=2.2",
     "modelscope>=1.10",
 ]
+# MCP server: expose the engine to MCP-capable IDEs (opencode / ZCode / Claude
+# Code). A thin HTTP proxy - needs the HTTP server (server.py) running.
+mcp = [
+    "mcp>=1.0",
+]
 # LLM summarization uses only the stdlib urllib, no extra deps needed.
 dev = ["pytest>=7.0"]
 all = [
     "sentence-transformers>=2.2",
     "modelscope>=1.10",
+    "mcp>=1.0",
     "pytest>=7.0",
 ]
 
 [project.scripts]
 agent-memory = "engine.server:main"
+agent-memory-mcp = "engine.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/ljftwq-dev/agent-memory-engine"
