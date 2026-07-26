@@ -60,6 +60,7 @@ def init_db(dim=None, force=False):
                 session_id TEXT             -- which agent session wrote this (anti cross-talk)
             )
         """)
+        _migrate_episodic(conn)            # add columns old DBs predate
         conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS episodic_vec USING vec0(
                 embedding FLOAT[{dim}]
@@ -85,6 +86,33 @@ def init_db(dim=None, force=False):
         return dim
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Lightweight additive schema migration
+# ---------------------------------------------------------------------------
+# CREATE TABLE IF NOT EXISTS won't add columns to an *existing* table, so a DB
+# created before a column was introduced is missing it and queries referencing
+# it crash (e.g. recall's `e.session_id` on a pre-a6389f0 DB). This adds any
+# absent columns via ALTER TABLE ADD COLUMN. Only ADDITIVE changes belong here
+# (nullable / no default so existing rows get NULL and stay backward
+# compatible); renames or type changes would need a real migration.
+
+_EPISODIC_MIGRATIONS = [
+    ("session_id", "TEXT"),   # a6389f0: multi-agent anti cross-talk
+]
+
+
+def _migrate_episodic(conn):
+    """Add columns old DBs predate. Idempotent; no-op on fresh/current DBs."""
+    try:
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(episodic)")}
+    except sqlite3.Error:
+        return  # table absent -> CREATE TABLE above/below handles it
+    for col, typedef in _EPISODIC_MIGRATIONS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE episodic ADD COLUMN {col} {typedef}")
+            print(f"[db] migrated episodic: +{col} {typedef} (old DB was missing it)")
 
 
 def get_dim(db_path=None):
