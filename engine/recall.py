@@ -224,13 +224,14 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
 
         if update and results:
             now_iso = now.isoformat(timespec="seconds")
-            for r in results:
-                conn.execute(
-                    "UPDATE episodic SET last_recall_ts = ?, "
-                    "strength = 1.0, tau = tau * 1.5 WHERE rowid = ?",
-                    (now_iso, r["rowid"]),
-                )
-            conn.commit()
+            with db.WRITE_LOCK:
+                for r in results:
+                    conn.execute(
+                        "UPDATE episodic SET last_recall_ts = ?, "
+                        "strength = 1.0, tau = tau * 1.5 WHERE rowid = ?",
+                        (now_iso, r["rowid"]),
+                    )
+                conn.commit()
         return results
     finally:
         conn.close()

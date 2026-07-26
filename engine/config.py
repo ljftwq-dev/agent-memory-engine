@@ -24,6 +24,9 @@ DEFAULTS = {
     "RERANKER_ENABLE": "0",      # 1 = cross-encoder precision rerank after hybrid fusion
     "RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",   # multilingual cross-encoder
     "RERANKER_POOL": "0",        # how many fused candidates to rerank (0 = all)
+    "BACKUP_ENABLE": "1",        # 1 = periodic safe snapshots of the memory DB
+    "BACKUP_INTERVAL_HOURS": "6",  # how often to snapshot
+    "BACKUP_KEEP": "5",          # keep only the newest N backups
     "SESSION_TIMEOUT_HOURS": "2",  # session goes stale after this long w/o heartbeat
 }
 
@@ -135,6 +138,18 @@ def reranker_model():
 
 def reranker_pool():
     return int(get("RERANKER_POOL"))
+
+
+def backup_enable():
+    return get("BACKUP_ENABLE") in ("1", "true", "yes", "on")
+
+
+def backup_interval_hours():
+    return float(get("BACKUP_INTERVAL_HOURS"))
+
+
+def backup_keep():
+    return int(get("BACKUP_KEEP"))
 
 
 def session_timeout_hours():

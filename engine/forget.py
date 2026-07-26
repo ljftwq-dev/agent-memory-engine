@@ -68,14 +68,15 @@ def decay_all(threshold=0.05, purge=False, dry_run=False, min_age_days=0):
                       f"tau={tau_days:.1f}d  dt={delta_days:.1f}d  {(r['topic'] or '')[:40]}")
                 continue
 
-            if purge and new_strength < threshold:
-                conn.execute("DELETE FROM episodic WHERE rowid = ?", (r["rowid"],))
-                conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (r["rowid"],))
-                purged += 1
-            else:
-                conn.execute("UPDATE episodic SET strength = ? WHERE rowid = ?",
-                             (new_strength, r["rowid"]))
-                decayed += 1
+            with db.WRITE_LOCK:
+                if purge and new_strength < threshold:
+                    conn.execute("DELETE FROM episodic WHERE rowid = ?", (r["rowid"],))
+                    conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (r["rowid"],))
+                    purged += 1
+                else:
+                    conn.execute("UPDATE episodic SET strength = ? WHERE rowid = ?",
+                                 (new_strength, r["rowid"]))
+                    decayed += 1
 
         if not dry_run:
             conn.commit()

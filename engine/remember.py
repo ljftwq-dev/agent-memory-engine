@@ -107,55 +107,56 @@ def remember(topic, summary, raw=None, ts=None,
 
     conn = db.get_conn()
     try:
-        _ensure_schema()
-        vec = embed.encode(summary)
-        blob = sqlite_vec.serialize_float32(vec)
+        with db.WRITE_LOCK:
+            _ensure_schema()
+            vec = embed.encode(summary)
+            blob = sqlite_vec.serialize_float32(vec)
 
-        if dedup:
-            try:
-                row = conn.execute(
-                    "SELECT v.rowid AS rowid, v.distance AS distance, e.raw AS raw "
-                    "FROM episodic_vec v "
-                    "JOIN episodic e ON e.rowid = v.rowid "
-                    "WHERE v.embedding MATCH ? AND v.k = 1 "
-                    "ORDER BY v.distance",
-                    (blob,),
-                ).fetchone()
-                if row is not None and row["distance"] <= dedup_threshold:
-                    rid = row["rowid"]
-                    old_raw = row["raw"]
-                    if old_raw and raw:
-                        new_raw = old_raw + "\n\n---\n" + raw
-                    else:
-                        new_raw = old_raw or raw
-                    conn.execute(
-                        "UPDATE episodic SET ts = ?, topic = ?, summary = ?, "
-                        "raw = ?, strength = 1.0, tau = tau * 1.5, session_id = ? "
-                        "WHERE rowid = ?",
-                        (ts, topic, summary, new_raw, session_id, rid),
-                    )
-                    conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (rid,))
-                    conn.execute(
-                        "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
-                        (rid, blob),
-                    )
-                    conn.commit()
-                    return rid, "merged"
-            except sqlite3.Error:
-                pass  # dedup query failed -> fall through to normal insert
+            if dedup:
+                try:
+                    row = conn.execute(
+                        "SELECT v.rowid AS rowid, v.distance AS distance, e.raw AS raw "
+                        "FROM episodic_vec v "
+                        "JOIN episodic e ON e.rowid = v.rowid "
+                        "WHERE v.embedding MATCH ? AND v.k = 1 "
+                        "ORDER BY v.distance",
+                        (blob,),
+                    ).fetchone()
+                    if row is not None and row["distance"] <= dedup_threshold:
+                        rid = row["rowid"]
+                        old_raw = row["raw"]
+                        if old_raw and raw:
+                            new_raw = old_raw + "\n\n---\n" + raw
+                        else:
+                            new_raw = old_raw or raw
+                        conn.execute(
+                            "UPDATE episodic SET ts = ?, topic = ?, summary = ?, "
+                            "raw = ?, strength = 1.0, tau = tau * 1.5, session_id = ? "
+                            "WHERE rowid = ?",
+                            (ts, topic, summary, new_raw, session_id, rid),
+                        )
+                        conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (rid,))
+                        conn.execute(
+                            "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
+                            (rid, blob),
+                        )
+                        conn.commit()
+                        return rid, "merged"
+                except sqlite3.Error:
+                    pass  # dedup query failed -> fall through to normal insert
 
-        cur = conn.execute(
-            "INSERT INTO episodic (ts, topic, summary, raw, created_ts, session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (ts, topic, summary, raw, ts, session_id),
-        )
-        rowid = cur.lastrowid
-        conn.execute(
-            "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
-            (rowid, blob),
-        )
-        conn.commit()
-        return rowid, "created"
+            cur = conn.execute(
+                "INSERT INTO episodic (ts, topic, summary, raw, created_ts, session_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (ts, topic, summary, raw, ts, session_id),
+            )
+            rowid = cur.lastrowid
+            conn.execute(
+                "INSERT INTO episodic_vec (rowid, embedding) VALUES (?, ?)",
+                (rowid, blob),
+            )
+            conn.commit()
+            return rowid, "created"
     finally:
         conn.close()
 

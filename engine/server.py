@@ -24,6 +24,8 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
 import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -312,6 +314,20 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.flush()
 
 
+def _backup_loop():
+    """Daemon: snapshot the memory DB on startup, then every N hours. Safe while
+    the server is writing (uses SQLite's online backup API)."""
+    interval = max(config.backup_interval_hours() * 3600.0, 60.0)
+    while True:
+        try:
+            dst = db.do_backup()
+            if dst:
+                print(f"[backup] snapshot -> {os.path.basename(dst)}", flush=True)
+        except Exception as e:
+            sys.stderr.write(f"[backup] failed: {e}\n")
+        time.sleep(interval)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Agent Memory Engine HTTP server")
     parser.add_argument("--port", type=int, default=8765)
@@ -322,6 +338,8 @@ def main():
 
     Handler._READ_ONLY = args.read_only
     db.init_db(dim=embed.dim())
+    if config.backup_enable():
+        threading.Thread(target=_backup_loop, daemon=True, name="ame-backup").start()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print("=" * 60)
     print("  Agent Memory Engine")

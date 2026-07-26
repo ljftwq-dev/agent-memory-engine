@@ -146,6 +146,9 @@ Full writeup: [`docs/design.md`](docs/design.md).
 | `AME_RERANKER_ENABLE` | `0` | cross-encoder precision rerank after fusion (opt-in) |
 | `AME_RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | cross-encoder model (multilingual) |
 | `AME_RERANKER_POOL` | `0` | how many gated candidates to rerank (0 = all) |
+| `AME_BACKUP_ENABLE` | `1` | periodic safe snapshots of the memory DB |
+| `AME_BACKUP_INTERVAL_HOURS` | `6` | how often to snapshot |
+| `AME_BACKUP_KEEP` | `5` | keep only the newest N backups |
 | `AME_SESSION_TIMEOUT_HOURS` | `2` | session goes stale after this long w/o heartbeat |
 
 ---

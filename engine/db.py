@@ -13,11 +13,22 @@ One .db file holds both structured metadata and the vector index
 """
 import os
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 
 import sqlite_vec
 
 from . import config
+
+
+# Serializes every write within one process. The HTTP server is threaded
+# (ThreadingHTTPServer), and SQLite + the vec0 virtual table are NOT safe under
+# concurrent writes from multiple threads - the dedup-read-then-write race in
+# remember() can create duplicates, and racing vec0 writes can corrupt the DB
+# (we lost a production DB to this once). Every write path acquires this lock;
+# reads stay concurrent. (Cross-process safety comes from running a single
+# server, which the autostart guard enforces.)
+WRITE_LOCK = threading.Lock()
 
 
 def get_conn(db_path=None):
@@ -241,14 +252,15 @@ def register_session(session_id, task):
     conn = get_conn()
     now = datetime.now().isoformat(timespec="seconds")
     try:
-        conn.execute(
-            "INSERT INTO session (session_id, task, progress, status, "
-            "started_ts, updated_ts) VALUES (?, ?, NULL, 'active', ?, ?) "
-            "ON CONFLICT(session_id) DO UPDATE SET "
-            "task=excluded.task, status='active', updated_ts=excluded.updated_ts",
-            (session_id, task, now, now),
-        )
-        conn.commit()
+        with WRITE_LOCK:
+            conn.execute(
+                "INSERT INTO session (session_id, task, progress, status, "
+                "started_ts, updated_ts) VALUES (?, ?, NULL, 'active', ?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET "
+                "task=excluded.task, status='active', updated_ts=excluded.updated_ts",
+                (session_id, task, now, now),
+            )
+            conn.commit()
     finally:
         conn.close()
 
@@ -261,20 +273,21 @@ def heartbeat_session(session_id, progress=None, task=None):
     conn = get_conn()
     now = datetime.now().isoformat(timespec="seconds")
     try:
-        cur = conn.execute(
-            "UPDATE session SET updated_ts = ?, status = 'active' "
-            "WHERE session_id = ?", (now, session_id),
-        )
-        if cur.rowcount == 0:
-            return False
-        if task is not None:
-            conn.execute("UPDATE session SET task = ? WHERE session_id = ?",
-                         (task, session_id))
-        if progress is not None:
-            conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
-                         (progress, session_id))
-        conn.commit()
-        return True
+        with WRITE_LOCK:
+            cur = conn.execute(
+                "UPDATE session SET updated_ts = ?, status = 'active' "
+                "WHERE session_id = ?", (now, session_id),
+            )
+            if cur.rowcount == 0:
+                return False
+            if task is not None:
+                conn.execute("UPDATE session SET task = ? WHERE session_id = ?",
+                             (task, session_id))
+            if progress is not None:
+                conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
+                             (progress, session_id))
+            conn.commit()
+            return True
     finally:
         conn.close()
 
@@ -287,17 +300,18 @@ def finish_session(session_id, result=None):
     conn = get_conn()
     now = datetime.now().isoformat(timespec="seconds")
     try:
-        cur = conn.execute(
-            "UPDATE session SET status = 'finished', updated_ts = ? "
-            "WHERE session_id = ?", (now, session_id),
-        )
-        if cur.rowcount == 0:
-            return False
-        if result is not None:
-            conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
-                         (result, session_id))
-        conn.commit()
-        return True
+        with WRITE_LOCK:
+            cur = conn.execute(
+                "UPDATE session SET status = 'finished', updated_ts = ? "
+                "WHERE session_id = ?", (now, session_id),
+            )
+            if cur.rowcount == 0:
+                return False
+            if result is not None:
+                conn.execute("UPDATE session SET progress = ? WHERE session_id = ?",
+                             (result, session_id))
+            conn.commit()
+            return True
     finally:
         conn.close()
 
@@ -322,6 +336,65 @@ def list_active_sessions(timeout_hours=None):
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Online backup (safe while the server is running)
+# ---------------------------------------------------------------------------
+# Memories are precious and SQLite files can corrupt (we lost one to concurrent
+# vec0 writes). This takes a point-in-time consistent copy via SQLite's online
+# backup API, which works while writes are happening.
+
+def backups_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(config.db_path())), "backups")
+
+
+def backup_db(dst_path):
+    """Copy the live DB to dst_path via SQLite's online backup API (consistent
+    even while the server is writing). Acquires WRITE_LOCK so the copy isn't
+    torn by a concurrent write."""
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with WRITE_LOCK:
+        src = get_conn()
+        try:
+            dst = sqlite3.connect(dst_path)
+            try:
+                src.backup(dst)        # online, page-by-page, consistent
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
+
+def rotate_backups(keep=None):
+    """Keep only the newest `keep` backups (by mtime); delete older ones."""
+    if keep is None:
+        keep = config.backup_keep()
+    bdir = backups_dir()
+    if not os.path.isdir(bdir):
+        return 0
+    files = [f for f in os.scandir(bdir) if f.is_file() and f.name.endswith(".db")]
+    files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    deleted = 0
+    for f in files[keep:]:
+        try:
+            os.remove(f.path)
+            deleted += 1
+        except OSError:
+            pass
+    return deleted
+
+
+def do_backup():
+    """One backup pass: rotate old, write a timestamped snapshot. Returns the
+    destination path, or None if backups are disabled."""
+    if not config.backup_enable():
+        return None
+    rotate_backups()
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(backups_dir(), f"memory-{ts}.db")
+    backup_db(dst)
+    return dst
 
 
 if __name__ == "__main__":
