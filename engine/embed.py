@@ -13,6 +13,7 @@ Design:
 """
 import hashlib
 import os
+import threading
 
 import numpy as np
 
@@ -20,30 +21,64 @@ from . import config
 
 _MODEL = None
 _MODE = None
+_LOAD_LOCK = threading.Lock()
+
+
+def _local_modelscope_path(model_name):
+    """Resolve a model to its local ModelScope snapshot dir without network.
+
+    Layout: {MODELSCOPE_CACHE}/models/{ns}--{name}/snapshots/{rev}/
+    Returns the revision dir path if it has config.json, else None.
+    """
+    cache = os.environ.get("MODELSCOPE_CACHE")
+    if not cache:
+        return None
+    ns_name = model_name.replace("/", "--")
+    snap_root = os.path.join(cache, "models", ns_name, "snapshots")
+    if not os.path.isdir(snap_root):
+        return None
+    try:
+        revs = sorted(os.listdir(snap_root))
+    except OSError:
+        return None
+    ordered = (["master"] if "master" in revs else []) + [r for r in revs if r != "master"]
+    for rev in ordered:
+        cand = os.path.join(snap_root, rev)
+        if os.path.isdir(cand) and os.path.isfile(os.path.join(cand, "config.json")):
+            return cand
+    return None
 
 
 def _load_model():
     global _MODEL, _MODE
-    if _MODE is not None:          # already attempted (success or fallback)
+    if _MODE is not None:          # fast path: already attempted (no lock)
         return
-    model_name = config.embed_model()
-    try:
-        from sentence_transformers import SentenceTransformer
-        path = None
-        # Prefer local ModelScope cache, then let sentence-transformers resolve HF.
+    # Double-checked locking: under ThreadingHTTPServer two concurrent recalls
+    # could both miss the fast path and load the model twice. The lock makes
+    # the (expensive) load happen exactly once across threads.
+    with _LOAD_LOCK:
+        if _MODE is not None:      # re-check under the lock
+            return
+        model_name = config.embed_model()
         try:
-            from modelscope import snapshot_download
-            path = snapshot_download(model_name)
-        except Exception:
-            path = model_name  # falls back to HF cache / download inside ST
-        _MODEL = SentenceTransformer(path)
-        _MODE = "sentence-transformers"
-        print(f"[embed] loaded {model_name} (mode={_MODE})")
-    except Exception as e:
-        _MODEL = None
-        _MODE = "hash-fallback"
-        print(f"[embed] WARNING: model load failed: {e}")
-        print(f"[embed] falling back to hash pseudo-embedding (no semantics)")
+            from sentence_transformers import SentenceTransformer
+            path = _local_modelscope_path(model_name)
+            if path:
+                print(f"[embed] local cache hit: {path}")
+            else:
+                try:
+                    from modelscope import snapshot_download
+                    path = snapshot_download(model_name)
+                except Exception:
+                    path = model_name
+            _MODEL = SentenceTransformer(path)
+            _MODE = "sentence-transformers"
+            print(f"[embed] loaded {model_name} (mode={_MODE})")
+        except Exception as e:
+            _MODEL = None
+            _MODE = "hash-fallback"
+            print(f"[embed] WARNING: model load failed: {e}")
+            print(f"[embed] falling back to hash pseudo-embedding (no semantics)")
 
 
 def encode(text):

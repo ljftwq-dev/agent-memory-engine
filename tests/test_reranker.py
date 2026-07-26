@@ -99,6 +99,18 @@ def test_reranker_returns_none_for_empty():
     assert reranker.rerank("anything", []) is None
 
 
+def test_cached_mode_does_not_trigger_load():
+    """cached_mode() reports state without downloading the model.
+
+    /health calls this on every hit - it must NEVER trigger a 1.1GB download,
+    even before any recall has run.
+    """
+    # fresh singleton (no load attempted yet)
+    assert reranker.cached_mode() is None
+    # still None - cached_mode must not have called _load_model
+    assert reranker._MODE is None
+
+
 def test_reranker_handles_identical_scores():
     """When the cross-encoder returns identical scores, relevance stays neutral
     (0.5) and ranking is left to the rest of the score."""

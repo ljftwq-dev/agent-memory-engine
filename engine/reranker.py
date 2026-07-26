@@ -29,38 +29,45 @@ CLI:
     python -m engine.reranker "query"    # probe on a toy pair
 """
 import argparse
+import threading
 
 from . import config
 
 _MODEL = None
 _MODE = None  # None = untried; "cross-encoder" = loaded; "disabled" = off/unavailable
+_LOAD_LOCK = threading.Lock()
 
 
 def _load_model():
     global _MODEL, _MODE
-    if _MODE is not None:          # already attempted (success or fallback)
+    if _MODE is not None:          # fast path: already attempted (no lock)
         return
     # NB: the enable/disable decision lives in recall.py (the ``rerank`` param,
     # default from config.reranker_enable()). This module just loads on demand
     # once asked, and degrades to None if the heavy dep is unavailable.
-    model_name = config.reranker_model()
-    try:
-        from sentence_transformers import CrossEncoder
-        path = None
-        # Prefer local ModelScope cache, then let sentence-transformers resolve HF.
+    # Double-checked locking: under ThreadingHTTPServer concurrent recalls must
+    # not load the cross-encoder twice.
+    with _LOAD_LOCK:
+        if _MODE is not None:      # re-check under the lock
+            return
+        model_name = config.reranker_model()
         try:
-            from modelscope import snapshot_download
-            path = snapshot_download(model_name)
-        except Exception:
-            path = model_name  # falls back to HF cache / download inside ST
-        _MODEL = CrossEncoder(path)
-        _MODE = "cross-encoder"
-        print(f"[reranker] loaded {model_name} (mode={_MODE})")
-    except Exception as e:
-        _MODEL = None
-        _MODE = "disabled"
-        print(f"[reranker] WARNING: model load failed: {e}")
-        print(f"[reranker] disabled, keeping RRF relevance for recall")
+            from sentence_transformers import CrossEncoder
+            path = None
+            # Prefer local ModelScope cache, then let sentence-transformers resolve HF.
+            try:
+                from modelscope import snapshot_download
+                path = snapshot_download(model_name)
+            except Exception:
+                path = model_name  # falls back to HF cache / download inside ST
+            _MODEL = CrossEncoder(path)
+            _MODE = "cross-encoder"
+            print(f"[reranker] loaded {model_name} (mode={_MODE})")
+        except Exception as e:
+            _MODEL = None
+            _MODE = "disabled"
+            print(f"[reranker] WARNING: model load failed: {e}")
+            print(f"[reranker] disabled, keeping RRF relevance for recall")
 
 
 def _candidate_text(d):
@@ -98,6 +105,16 @@ def rerank(query, candidates):
 
 def mode():
     _load_model()
+    return _MODE
+
+
+def cached_mode():
+    """The cached mode WITHOUT triggering a load.
+
+    Used by /health for observability: we don't want a health check to download
+    a 1.1GB cross-encoder. Returns None until the first recall actually
+    requests reranking.
+    """
     return _MODE
 
 

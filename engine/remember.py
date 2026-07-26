@@ -26,6 +26,22 @@ import sqlite_vec
 from . import config, db, embed
 
 
+_SCHEMA_READY = False
+
+
+def _ensure_schema():
+    """Make sure the schema exists. init_db is idempotent but opens its own
+    connection + re-checks triggers every call, so we gate it on a flag and do
+    it only once per process (the server already inits at startup; this covers
+    the CLI / first-call path). A `force=True` reset elsewhere (e.g. tests)
+    recreates the schema regardless."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    db.init_db(dim=embed.dim())
+    _SCHEMA_READY = True
+
+
 def _llm_summarize(text):
     """Condense the dialogue into one semantic sentence via an OpenAI-compatible API.
 
@@ -91,7 +107,7 @@ def remember(topic, summary, raw=None, ts=None,
 
     conn = db.get_conn()
     try:
-        db.init_db(dim=embed.dim())
+        _ensure_schema()
         vec = embed.encode(summary)
         blob = sqlite_vec.serialize_float32(vec)
 

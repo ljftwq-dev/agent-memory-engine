@@ -5,8 +5,8 @@ Uses the standard library http.server (no FastAPI/Flask dependency).
 Default bind: 127.0.0.1:8765 (localhost only, safe).
 
 Endpoints:
-  GET  /health              service status (embed mode/dim, db path, llm on/off)
-  GET  /recall?q=&k=3       two-stage semantic recall, top-k
+  GET  /health              service status (embed mode/dim, reranker, db path, llm on/off)
+  GET  /recall?q=&k=3       two-stage semantic recall, top-k (?rerank=1 to force cross-encoder)
   GET  /recent?k=5          latest k memories (by time, desc)
   GET  /search?q=           keyword LIKE match
   GET  /sessions/active     other agents' current tasks (multi-agent collab)
@@ -29,7 +29,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import config, db, embed
+from . import config, db, embed, reranker
 from .recall import recall as do_recall
 from .remember import remember as do_remember
 from .forget import decay_all
@@ -72,8 +72,11 @@ async function doRecall(){
   const q=document.getElementById('q').value; if(!q) return;
   const r=await fetch('/recall?q='+encodeURIComponent(q)+'&k=5').then(r=>r.json());
   document.getElementById('recall-results').innerHTML=(r.results||[]).map(m=>{
-    const rel=(m.rrf!==undefined&&m.rrf!==null)?m.rrf:(1-(m.distance||0));
-    return '<div class="mem"><b>'+(m.topic||'')+'</b> <span class="tag">rel '+rel.toFixed(2)+'</span>'+(m.session_id?'<span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,300)+'</small></div>';
+    let rel,tag;
+    if(m.rerank!==undefined&&m.rerank!==null){rel=m.rerank;tag='rerank';}
+    else if(m.rrf!==undefined&&m.rrf!==null){rel=m.rrf;tag='rrf';}
+    else{rel=1-(m.distance||0);tag='sim';}
+    return '<div class="mem"><b>'+(m.topic||'')+'</b> <span class="tag">'+tag+' '+rel.toFixed(2)+'</span>'+(m.session_id?'<span class="tag">'+m.session_id+'</span>':'')+'<br><small>'+(m.summary||'').slice(0,300)+'</small></div>';
   }).join('')||'<i>no match</i>';
 }
 async function loadMemories(){
@@ -120,6 +123,10 @@ def search_keyword(q, k=5):
 
 
 class Handler(BaseHTTPRequestHandler):
+    _READ_ONLY = False
+    WRITE_PATHS = {"/remember", "/forget",
+                   "/session/register", "/session/heartbeat", "/session/finish"}
+
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(code)
@@ -153,7 +160,12 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(url.query)
 
             if url.path in ("/", "/ui"):
-                self._send_html(DASHBOARD_HTML)
+                html = DASHBOARD_HTML
+                if self._READ_ONLY:
+                    badge = '<b style="color:#cf222e">READ-ONLY</b> \u00b7 '
+                    html = html.replace('<p class="sub">dashboard',
+                                        '<p class="sub">' + badge + 'dashboard', 1)
+                self._send_html(html)
                 return
 
             if url.path == "/health":
@@ -162,6 +174,8 @@ class Handler(BaseHTTPRequestHandler):
                     "service": "agent-memory-engine",
                     "embed_mode": embed.mode(),
                     "embed_dim": embed.dim(),
+                    "reranker_enabled": config.reranker_enable(),
+                    "reranker_mode": reranker.cached_mode(),
                     "db_path": config.db_path(),
                     "db_exists": os.path.exists(config.db_path()),
                     "llm_enabled": config.llm_enabled(),
@@ -175,7 +189,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 k = int(qs.get("k", ["3"])[0])
                 do_update = qs.get("update", ["true"])[0].lower() in ("1", "true", "yes")
-                results = do_recall(q, top_k=k, update=do_update)
+                # ?rerank=1/0 overrides the config default for this request;
+                # absent => config.reranker_enable() (the configured default).
+                do_rerank = None
+                if "rerank" in qs:
+                    do_rerank = qs["rerank"][0].lower() in ("1", "true", "yes", "on")
+                results = do_recall(q, top_k=k, update=do_update, rerank=do_rerank)
                 self._send(200, {"ok": True, "query": q, "count": len(results),
                                  "updated": do_update, "results": results})
                 return
@@ -209,6 +228,9 @@ class Handler(BaseHTTPRequestHandler):
                              "traceback": traceback.format_exc()})
 
     def do_POST(self):
+        if self._READ_ONLY and urlparse(self.path).path in self.WRITE_PATHS:
+            self._err(403, "server is in read-only mode; write endpoints disabled")
+            return
         try:
             url = urlparse(self.path)
             length = int(self.headers.get("Content-Length", "0") or "0")
@@ -294,8 +316,11 @@ def main():
     parser = argparse.ArgumentParser(description="Agent Memory Engine HTTP server")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--read-only", action="store_true",
+                        help="disable write endpoints (dashboard view-only)")
     args = parser.parse_args()
 
+    Handler._READ_ONLY = args.read_only
     db.init_db(dim=embed.dim())
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print("=" * 60)
@@ -304,12 +329,14 @@ def main():
     print(f"  listening   : http://{args.host}:{args.port}")
     print(f"  embed mode  : {embed.mode()}")
     print(f"  embed dim   : {embed.dim()}")
+    print(f"  reranker    : {'enabled' if config.reranker_enable() else 'disabled'} ({config.reranker_model()})")
     print(f"  db path     : {config.db_path()}")
     print(f"  llm enabled : {config.llm_enabled()}")
+    print(f"  read-only   : {args.read_only}")
     print("=" * 60)
     print("  endpoints:")
     print("    GET  /health")
-    print("    GET  /recall?q=...&k=3")
+    print("    GET  /recall?q=...&k=3       (?rerank=1 forces cross-encoder rerank)")
     print("    GET  /recent?k=5")
     print("    GET  /search?q=...")
     print("    GET  /sessions/active")
