@@ -31,7 +31,8 @@ def _reset_reranker_singleton():
 def test_reranker_disabled_by_default():
     """The reranker is opt-in (off by default in config)."""
     assert config.reranker_enable() is False
-    assert config.reranker_pool() > 0
+    # default RERANKER_POOL=0 means "rerank all gated candidates"
+    assert config.reranker_pool() == 0
     # check the shipped default model directly (conftest overrides the env for tests)
     assert "bge-reranker" in config.DEFAULTS["RERANKER_MODEL"]
 

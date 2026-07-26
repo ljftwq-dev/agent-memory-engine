@@ -191,14 +191,27 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
             candidates.append(d)
 
         # ---- optional cross-encoder precision rerank ----
-        # Re-score the most promising candidates with a heavy cross-encoder and
-        # replace the fused relevance. Classic two-stage IR: cheap wide recall
-        # above, expensive precise rerank here. Skipped (keeps RRF/sim) when the
+        # Re-score the gated candidates with a heavy cross-encoder and replace
+        # the fused relevance. Classic two-stage IR: cheap wide recall above,
+        # expensive precise rerank here. Skipped (keeps RRF/sim) when the
         # reranker is disabled or its model isn't available.
+        #
+        # By default we rerank ALL gated candidates (RERANKER_POOL<=0). The pool
+        # is already bounded by recall_pool + bm25_pool (~30), so this is cheap,
+        # and - crucially - reranking the full set avoids a min-max boundary
+        # artifact: if only a subset were reranked, an item min-maxed to 0.0
+        # would sink below the unreranked items (which keep their RRF score),
+        # wrongly demoting borderline-relevant memories. RERANKER_POOL>0 caps it
+        # for unusually large candidate sets.
         if rerank and candidates:
             from . import reranker as _rerank_mod
-            pool_r = max(config.reranker_pool(), top_k)
-            pre_sort = sorted(candidates, key=lambda x: x["score"], reverse=True)[:pool_r]
+            configured = config.reranker_pool()
+            if configured <= 0:
+                pre_sort = candidates                       # rerank all (default)
+            else:
+                pool_r = min(configured, len(candidates))
+                pre_sort = sorted(candidates, key=lambda x: x["score"],
+                                  reverse=True)[:pool_r]
             ce_scores = _rerank_mod.rerank(query, pre_sort)
             if ce_scores is not None:
                 for c, rel_ce in zip(pre_sort, ce_scores):

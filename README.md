@@ -145,7 +145,7 @@ Full writeup: [`docs/design.md`](docs/design.md).
 | `AME_BM25_POOL` | `15` | stage-A BM25 recall count (hybrid mode) |
 | `AME_RERANKER_ENABLE` | `0` | cross-encoder precision rerank after fusion (opt-in) |
 | `AME_RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | cross-encoder model (multilingual) |
-| `AME_RERANKER_POOL` | `20` | how many fused candidates to cross-encoder rerank |
+| `AME_RERANKER_POOL` | `0` | how many gated candidates to rerank (0 = all) |
 | `AME_SESSION_TIMEOUT_HOURS` | `2` | session goes stale after this long w/o heartbeat |
 
 ---

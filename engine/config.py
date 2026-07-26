@@ -23,7 +23,7 @@ DEFAULTS = {
     "BM25_POOL": "15",           # stage-A BM25 recall count (hybrid mode)
     "RERANKER_ENABLE": "0",      # 1 = cross-encoder precision rerank after hybrid fusion
     "RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",   # multilingual cross-encoder
-    "RERANKER_POOL": "20",       # how many fused candidates to cross-encoder rerank
+    "RERANKER_POOL": "0",        # how many fused candidates to rerank (0 = all)
     "SESSION_TIMEOUT_HOURS": "2",  # session goes stale after this long w/o heartbeat
 }
 
