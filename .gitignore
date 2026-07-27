@@ -26,6 +26,9 @@ htmlcov/
 *.sqlite
 *.sqlite3
 
+# Runtime instance (local memory.db + server scripts, NEVER commit)
+runtime/
+
 # Editors
 .vscode/
 .idea/
