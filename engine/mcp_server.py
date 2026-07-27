@@ -66,6 +66,35 @@ def _server_down(e):
 mcp = FastMCP("agent-memory-engine")
 
 
+def _format_recall(results):
+    """Format recall results as a readable, numbered string for the IDE.
+
+    None-safe on ``distance``: BM25-only hybrid candidates carry
+    ``distance=None`` (they have no vector match). A naive
+    ``1 - m.get("distance", 0)`` is a trap - ``dict.get(k, default)`` evaluates
+    ``default`` *eagerly*, and when the key exists with value ``None`` the
+    default (0) is ignored, so it does ``1 - None`` and crashes the whole tool.
+    Branch explicitly instead. See tests/test_mcp_server.py.
+    """
+    if not results:
+        return "(no relevant memories found)"
+    lines = []
+    for i, m in enumerate(results, 1):
+        if "rerank" in m:
+            rel, tag = m["rerank"], "rerank"
+        elif "rrf" in m:
+            rel, tag = m["rrf"], "rrf"
+        else:
+            dist = m.get("distance")
+            rel = (1.0 - dist) if dist is not None else 0.0
+            tag = "sim"
+        lines.append(
+            f"[{i}] {tag}={rel:.2f}  {m.get('topic', '')}\n"
+            f"    {m.get('summary', '')}"
+        )
+    return "\n".join(lines)
+
+
 @mcp.tool()
 def recall(query: str, top_k: int = 3) -> str:
     """Recall memories related to a query. Call this at the start of a session
@@ -80,18 +109,7 @@ def recall(query: str, top_k: int = 3) -> str:
         r = _get("/recall", {"q": query, "k": top_k, "update": "true"})
     except Exception as e:
         return _server_down(e)
-    results = r.get("results", [])
-    if not results:
-        return "(no relevant memories found)"
-    lines = []
-    for i, m in enumerate(results, 1):
-        rel = m.get("rerank", m.get("rrf", 1 - m.get("distance", 0)))
-        tag = "rerank" if "rerank" in m else ("rrf" if "rrf" in m else "sim")
-        lines.append(
-            f"[{i}] {tag}={rel:.2f}  {m.get('topic', '')}\n"
-            f"    {m.get('summary', '')}"
-        )
-    return "\n".join(lines)
+    return _format_recall(r.get("results", []))
 
 
 @mcp.tool()
