@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
+**中文文档：[README-zh.md](README-zh.md)**
+
 A **long-term memory engine** for coding agents (opencode / claude-code / any
 HTTP-speaking agent). Lets an agent "remember" past sessions across restarts:
 each new turn auto-recalls related history, each finished turn auto-stores a new
