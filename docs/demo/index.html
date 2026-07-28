@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Memory Engine — Live Demo</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:20px;background:#f6f8fa;color:#24292e}
+h1{color:#1f3a5f;margin-bottom:4px}
+.sub{color:#6a737d;margin-top:0}
+.badge{display:inline-block;background:#fff5cc;color:#7d5a00;padding:2px 8px;border-radius:3px;font-size:11px;border:1px solid #e8d56f;margin-left:6px}
+.card{background:#fff;border:1px solid #d0d7de;border-radius:6px;padding:16px;margin-bottom:16px}
+.card h3{margin-top:0}
+input[type=text]{padding:8px;width:65%;border:1px solid #d0d7de;border-radius:4px;font-size:14px}
+button{padding:8px 14px;background:#2e5c8a;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:13px}
+button:hover{background:#1f3a5f}
+button:disabled{background:#9aa0a6;cursor:default}
+.mem{padding:8px;border-bottom:1px solid #eee}
+.mem small{color:#6a737d}
+.tag{display:inline-block;background:#ddf4ff;color:#0969da;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:4px}
+#status{text-align:center;padding:40px;color:#6a737d}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid #d0d7de;border-top-color:#2e5c8a;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.err{color:#cf222e;background:#ffebe9;border:1px solid #ffcecb;padding:12px;border-radius:6px}
+.hint{font-size:12px;color:#6a737d;margin-top:6px}
+a{color:#0969da}
+</style>
+</head>
+<body>
+<h1>Agent Memory Engine <span class="badge">live demo</span></h1>
+<p class="sub">client-side semantic recall · runs <code>all-MiniLM-L6-v2</code> entirely in your browser</p>
+
+<div id="status"><span class="spinner"></span>Loading the embedding model (~22 MB, cached after first load)…</div>
+
+<div id="app" style="display:none">
+  <div class="card">
+    <h3>Recall</h3>
+    <input id="q" type="text" placeholder="try: 'how do transformers focus on words' or 'risk-adjusted return'">
+    <button id="btn" onclick="doRecall()">recall</button>
+    <div id="results" style="margin-top:10px"></div>
+    <div class="hint">Tip: try colloquial phrasings — semantic recall handles low lexical overlap.</div>
+  </div>
+  <div class="card">
+    <h3>Demo memory store <span style="font-weight:normal;color:#6a737d;font-size:12px">(15 coding-agent memories)</span></h3>
+    <div id="memories"></div>
+  </div>
+  <p class="hint">
+    This is a <b>client-side demo</b> using a small model (MiniLM, 384-dim) for zero-setup play.
+    The real engine uses <b>BGE-m3</b> (1024-dim, multilingual) + <b>BM25 hybrid</b> + an optional
+    <b>cross-encoder reranker</b>, and stores everything in a single SQLite file.
+    See the <a href="https://github.com/ljftwq-dev/agent-memory-engine">repo</a> +
+    <a href="https://github.com/ljftwq-dev/agent-memory-engine#benchmark">benchmark</a>.
+  </p>
+</div>
+
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
+env.allowLocalModels = false;
+
+const MEMORIES = [
+  {topic:"pytest fixtures", summary:"Discussed pytest fixtures: function scope recreates the fixture per test, session scope shares one instance across the whole run. Put shared fixtures in conftest.py. Fixtures keep tests isolated and DRY."},
+  {topic:"Python async/await", summary:"async def declares a coroutine; await suspends it until the awaited future resolves, yielding control to the event loop. Great for IO-bound concurrency (network, disk) without threads."},
+  {topic:"Python GIL", summary:"The Global Interpreter Lock lets only one thread run Python bytecode at a time, so threading doesn't speed up CPU-bound work. Use multiprocessing or C extensions to bypass it."},
+  {topic:"Git interactive rebase", summary:"git rebase -i HEAD~3 opens an editor to squash, reword, or reorder the last 3 commits. Never rebase commits already pushed to a shared branch. Use git reflog to recover from mistakes."},
+  {topic:"Docker multi-stage builds", summary:"Multi-stage Dockerfiles compile in one image then COPY only the artifacts into a slim final image, slashing the shipped size. Each FROM starts a stage; name them with AS."},
+  {topic:"SQLite vector search (sqlite-vec)", summary:"sqlite-vec adds a vec0 virtual table storing FLOAT[dim] embeddings; KNN via 'WHERE embedding MATCH ? AND k = N'. Zero extra service - the index lives inside the .db file."},
+  {topic:"Transformer self-attention", summary:"Self-attention computes Q, K, V from inputs; attention weights = softmax(QK^T / sqrt(d_k)); output = weights * V. Every position attends to all others, avoiding RNN's long-path problem."},
+  {topic:"Dropout regularization", summary:"Dropout randomly zeroes a fraction of activations during training, forcing the network not to rely on any single neuron. Reduces overfitting. Disabled at inference."},
+  {topic:"Q-learning", summary:"Q-learning learns the action-value Q(s,a) by Bellman updates; the greedy policy picks argmax_a Q(s,a). Off-policy, model-free. epsilon-greedy explores while learning."},
+  {topic:"Policy gradient methods", summary:"Policy gradients optimize the policy directly via REINFORCE: grad J = E[grad log pi(a|s) * return]. High variance - baselines and Actor-Critic (PPO/A2C) reduce it."},
+  {topic:"Momentum factor", summary:"The momentum factor bets that assets with recent positive returns keep outperforming in the near term (Jegadeesh-Titman). Long winners, short losers over a 3-12 month lookback."},
+  {topic:"Sharpe ratio", summary:"Sharpe = (return - risk_free) / volatility measures risk-adjusted return. Higher is better. Annualize by multiplying by sqrt(252) for daily returns."},
+  {topic:"Black-Scholes option pricing", summary:"Black-Scholes prices a European option from spot, strike, time, volatility, and risk-free rate. Assumes lognormal returns and constant vol. The Greeks are its partial derivatives."},
+  {topic:"SVD matrix decomposition", summary:"SVD factors any matrix A = U S V^T. The singular values in S reveal rank and energy concentration; truncated SVD gives the best low-rank approximation (Eckart-Young)."},
+  {topic:"Stochastic calculus (Ito's lemma)", summary:"Ito's lemma is the chain rule for stochastic processes: it adds a +0.5 g'^2 sigma^2 dt term. Foundation of Black-Scholes and continuous-time finance."},
+];
+
+const statusEl = document.getElementById('status');
+const appEl = document.getElementById('app');
+let extractor, memEmbeddings;
+
+function dot(a, b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+
+try {
+  extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  memEmbeddings = await Promise.all(MEMORIES.map(async m => {
+    const out = await extractor(m.summary, { pooling: 'mean', normalize: true });
+    return Float32Array.from(out.data);
+  }));
+
+  document.getElementById('memories').innerHTML = MEMORIES.map(m =>
+    `<div class="mem"><b>${m.topic}</b><br><small>${m.summary.slice(0,180)}…</small></div>`
+  ).join('');
+
+  statusEl.style.display = 'none';
+  appEl.style.display = '';
+  document.getElementById('q').focus();
+} catch (e) {
+  statusEl.innerHTML = `<div class="err">Failed to load the model from the CDN.<br>This can happen behind a firewall or if the CDN is blocked.<br><br>You can still see the engine running locally: <code>pip install agent-memory-engine-ljf[all]</code> → <code>python -m engine.server</code>.<br><br><small>${e}</small></div>`;
+  throw e;
+}
+
+window.doRecall = async function(){
+  const q = document.getElementById('q').value.trim();
+  if(!q) return;
+  const btn = document.getElementById('btn');
+  btn.disabled = true; btn.textContent = '…';
+  const resEl = document.getElementById('results');
+  resEl.innerHTML = '<small>ranking…</small>';
+  try {
+    const qOut = await extractor(q, { pooling: 'mean', normalize: true });
+    const qEmb = Float32Array.from(qOut.data);
+    const scored = memEmbeddings.map((e,i) => ({i, s: dot(e, qEmb)})).sort((a,b) => b.s - a.s);
+    const top = scored.slice(0, 4).filter(x => x.s > 0.15);
+    resEl.innerHTML = top.length ? top.map(x =>
+      `<div class="mem"><b>${MEMORIES[x.i].topic}</b> <span class="tag">sim ${x.s.toFixed(2)}</span><br><small>${MEMORIES[x.i].summary}</small></div>`
+    ).join('') : '<i>no strong match — try rephrasing</i>';
+  } catch(e) {
+    resEl.innerHTML = `<i>recall error: ${e}</i>`;
+  }
+  btn.disabled = false; btn.textContent = 'recall';
+};
+
+document.getElementById('q').addEventListener('keydown', e => { if(e.key === 'Enter') doRecall(); });
+</script>
+</body>
+</html>
