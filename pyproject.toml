@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-memory-engine-ljf"
-version = "0.1.0"
+version = "0.1.1"
 description = "Two-stage retrieval + gating long-term memory engine for coding agents."
 readme = "README.md"
 license = {text = "MIT"}
