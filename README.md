@@ -134,7 +134,8 @@ agent-memory-engine/
 │   └── server.py      stdlib HTTP server
 ├── examples/
 │   ├── seed_demo.py              load generic demo data
-│   └── opencode/memory.ts        reference opencode plugin (inject + recall + store)
+│   ├── opencode/memory.ts        reference opencode plugin (inject + recall + store)
+│   └── claude-code/              .mcp.json + CLAUDE.md snippet (model-driven)
 ├── tests/
 │   ├── conftest.py               temp DB + forced hash fallback (CI-friendly)
 │   ├── test_recall.py            gating / dedup / decay / reinforcement tests

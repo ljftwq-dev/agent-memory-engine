@@ -120,7 +120,8 @@ agent-memory-engine/
 │   └── server.py      标准库 HTTP 服务
 ├── examples/
 │   ├── seed_demo.py              灌入通用演示数据
-│   └── opencode/memory.ts        opencode 插件参考（注入 + 召回 + 存储）
+│   ├── opencode/memory.ts        opencode 插件参考（注入 + 召回 + 存储）
+│   └── claude-code/              .mcp.json + CLAUDE.md 片段（模型驱动）
 ├── tests/
 │   ├── conftest.py               临时 DB + 强制哈希兜底（CI 友好）
 │   ├── test_recall.py            门控 / 去重 / 衰减 / 强化测试
