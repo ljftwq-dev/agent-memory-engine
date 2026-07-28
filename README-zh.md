@@ -38,6 +38,29 @@ _Web 仪表盘——召回查询、浏览最近记忆、查看多 agent 实时�
 
 ---
 
+## 基准测试
+
+在 40 条编程 agent 记忆 + 24 个手工标注查询（分级相关性）上的检索质量消融实验。衰减已中和，数字反映纯检索/重排质量。完整方法见 [`benchmark/README.md`](benchmark/README.md)。
+
+| 配置 | nDCG@5 | Recall@5 |
+|---|---|---|
+| 纯向量 | 0.842 | 0.875 |
+| 混合（vector + BM25，RRF） | 0.868 | 0.896 |
+| **混合 + cross-encoder 重排** | **0.927** | **0.979** |
+
+每一步都值回票价：
+
+| 步骤 | nDCG@5 提升 | Recall@5 提升 |
+|---|---|---|
+| +混合（RRF 融合） | +0.026 | +0.021 |
+| +重排器（cross-encoder） | +0.059 | +0.083 |
+
+cross-encoder 是最大的单步收益——联合阅读 `(query, candidate)` 比分开编码更准，正如 IR 理论预测的那样。
+
+_2026-07-28 复现（BGE-m3 + bge-reranker-v2-m3）。自己跑：`python benchmark/run_benchmark.py`。_
+
+---
+
 ## 快速开始
 
 **从 PyPI 安装：**

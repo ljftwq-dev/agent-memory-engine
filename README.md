@@ -44,6 +44,33 @@ into the prompt. This engine is different:
 
 ---
 
+## Benchmark
+
+A retrieval-quality ablation on 40 coding-agent memories + 24 hand-labeled
+queries (graded relevance). Decay is neutralized so the numbers reflect pure
+retrieval/reranking quality. Full method: [`benchmark/README.md`](benchmark/README.md).
+
+| Condition | nDCG@5 | Recall@5 |
+|---|---|---|
+| pure-vector | 0.842 | 0.875 |
+| hybrid (vector + BM25, RRF) | 0.868 | 0.896 |
+| **hybrid + cross-encoder rerank** | **0.927** | **0.979** |
+
+Each stage earns its keep:
+
+| step | nDCG@5 gain | Recall@5 gain |
+|---|---|---|
+| +hybrid (RRF fusion) | +0.026 | +0.021 |
+| +reranker (cross-encoder) | +0.059 | +0.083 |
+
+The cross-encoder is the biggest single win — reading `(query, candidate)`
+jointly beats encoding them separately, exactly as IR theory predicts.
+
+_Reproduced 2026-07-28 (BGE-m3 + bge-reranker-v2-m3). Run it yourself:
+`python benchmark/run_benchmark.py`._
+
+---
+
 ## Quick start
 
 **From PyPI:**
