@@ -11,6 +11,10 @@
 
 _Architecture overview — see [docs/architecture.md](docs/architecture.md) for the full breakdown._
 
+![Dashboard](docs/images/screenshots/dashboard.png)
+
+_Web dashboard — recall a query, browse recent memories, and watch live multi-agent sessions._
+
 A **long-term memory engine** for coding agents (opencode / claude-code / any
 HTTP-speaking agent). Lets an agent "remember" past sessions across restarts:
 each new turn auto-recalls related history, each finished turn auto-stores a new
