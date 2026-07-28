@@ -20,6 +20,11 @@ HTTP-speaking agent). Lets an agent "remember" past sessions across restarts:
 each new turn auto-recalls related history, each finished turn auto-stores a new
 memory.
 
+> **Why?** Coding agents forget — every new session starts blind, with past
+> decisions, fixes, and conventions gone. This engine gives them cheap,
+> persistent memory: each turn auto-recalls related history, each finished turn
+> auto-stores a new memory.
+>
 > Inspired by SJTU's [MemRL paper](https://arxiv.org/abs/2601.03192), with an
 > engineering tradeoff: borrow its **two-stage retrieval + gating**, drop the
 > full RL (dialogue has no clean reward signal - see [design.md](docs/design.md)).
