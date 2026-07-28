@@ -1,5 +1,7 @@
 # Architecture
 
+![Agent Memory Engine architecture](images/architecture.png)
+
 ## Four-layer memory model
 
 The engine implements the **episodic** layer of a classic four-layer agent

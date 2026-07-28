@@ -7,6 +7,10 @@
 
 English version: [README.md](README.md)
 
+![Agent Memory Engine 架构](docs/images/architecture.png)
+
+_架构总览——完整说明见 [docs/architecture.md](docs/architecture.md)。_
+
 一个为编程 agent（opencode / claude-code / 任何能讲 HTTP 的 agent）设计的**长期记忆引擎**。让 agent 跨重启“记住”过去的会话：每个新回合自动**召回**相关历史，每个完成的回合自动**存入**一条新记忆。
 
 > 灵感来自上交大的 [MemRL 论文](https://arxiv.org/abs/2601.03192)，做了一个工程取舍：借鉴它的**两阶段检索 + 门控**，放弃完整 RL（对话没有干净的奖励信号——见 [design.md](docs/design.md)）。

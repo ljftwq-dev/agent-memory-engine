@@ -7,6 +7,10 @@
 
 **中文文档：[README-zh.md](README-zh.md)**
 
+![Agent Memory Engine architecture](docs/images/architecture.png)
+
+_Architecture overview — see [docs/architecture.md](docs/architecture.md) for the full breakdown._
+
 A **long-term memory engine** for coding agents (opencode / claude-code / any
 HTTP-speaking agent). Lets an agent "remember" past sessions across restarts:
 each new turn auto-recalls related history, each finished turn auto-stores a new
