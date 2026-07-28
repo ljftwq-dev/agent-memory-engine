@@ -73,6 +73,9 @@ _Reproduced 2026-07-28 (BGE-m3 + bge-reranker-v2-m3). Run it yourself:
 
 ## Quick start
 
+> **Live demo (no install):** https://ljftwq-dev.github.io/agent-memory-engine/demo/
+> Runs `all-MiniLM-L6-v2` in your browser — real semantic recall over demo data.
+
 **From PyPI:**
 ```bash
 pip install agent-memory-engine-ljf

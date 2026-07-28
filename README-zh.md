@@ -63,6 +63,9 @@ _2026-07-28 复现（BGE-m3 + bge-reranker-v2-m3）。自己跑：`python benchm
 
 ## 快速开始
 
+> **在线 demo（免安装）：** https://ljftwq-dev.github.io/agent-memory-engine/demo/
+> 在浏览器里跑 `all-MiniLM-L6-v2` —— 真实语义召回演示数据。
+
 **从 PyPI 安装：**
 ```bash
 pip install agent-memory-engine-ljf
