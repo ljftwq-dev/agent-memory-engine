@@ -57,6 +57,13 @@ a{color:#0969da}
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
 env.allowLocalModels = false;
 
+const MODEL = 'Xenova/all-MiniLM-L6-v2';
+// Official HF host first; on timeout, fall back to a mirror so the demo still
+// loads in regions where huggingface.co is slow or blocked (no proxy needed).
+const PRIMARY_HOST = 'https://huggingface.co';
+const FALLBACK_HOST = 'https://hf-mirror.com';
+const LOAD_TIMEOUT_MS = 20000;
+
 const MEMORIES = [
   {topic:"pytest fixtures", summary:"Discussed pytest fixtures: function scope recreates the fixture per test, session scope shares one instance across the whole run. Put shared fixtures in conftest.py. Fixtures keep tests isolated and DRY."},
   {topic:"Python async/await", summary:"async def declares a coroutine; await suspends it until the awaited future resolves, yielding control to the event loop. Great for IO-bound concurrency (network, disk) without threads."},
@@ -81,8 +88,37 @@ let extractor, memEmbeddings;
 
 function dot(a, b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
 
+// Race a promise against a timeout so a stuck network never spins forever.
+function withTimeout(promise, ms, msg) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(msg)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function setLoading(text) {
+  statusEl.innerHTML = `<span class="spinner"></span>${text}`;
+}
+
+async function loadExtractor(host) {
+  env.remoteHost = host;
+  return await pipeline('feature-extraction', MODEL);
+}
+
 try {
-  extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  try {
+    extractor = await withTimeout(
+      loadExtractor(PRIMARY_HOST),
+      LOAD_TIMEOUT_MS,
+      `primary host (${PRIMARY_HOST}) timed out after ${LOAD_TIMEOUT_MS / 1000}s`
+    );
+  } catch (e) {
+    // Official host slow/blocked — transparently retry on the mirror.
+    setLoading('Official host slow or blocked — switching to a HuggingFace mirror (hf-mirror.com)…');
+    extractor = await loadExtractor(FALLBACK_HOST);
+  }
+
   memEmbeddings = await Promise.all(MEMORIES.map(async m => {
     const out = await extractor(m.summary, { pooling: 'mean', normalize: true });
     return Float32Array.from(out.data);
@@ -96,7 +132,7 @@ try {
   appEl.style.display = '';
   document.getElementById('q').focus();
 } catch (e) {
-  statusEl.innerHTML = `<div class="err">Failed to load the model from the CDN.<br>This can happen behind a firewall or if the CDN is blocked.<br><br>You can still see the engine running locally: <code>pip install agent-memory-engine-ljf[all]</code> → <code>python -m engine.server</code>.<br><br><small>${e}</small></div>`;
+  statusEl.innerHTML = `<div class="err">Failed to load the embedding model.<br>Both the official HuggingFace host and the mirror failed — this usually means a firewall or network block.<br><br>You can still run the real engine locally: <code>pip install agent-memory-engine-ljf[all]</code> → <code>python -m engine.server</code>.<br><br><small>${e}</small></div>`;
   throw e;
 }
 
