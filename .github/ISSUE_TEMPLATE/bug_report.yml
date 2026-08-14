@@ -1,0 +1,46 @@
+name: Bug report
+description: Report something that's broken or behaving wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! A minimal repro helps a lot.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the unexpected behavior.
+      placeholder: "When I called /recall with ..., I expected ... but got ..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that triggers the bug.
+      placeholder: |
+        1. `pip install agent-memory-engine-ljf[all]`
+        2. `python -m engine.server`
+        3. `curl 'http://127.0.0.1:8765/recall?q=...'`
+        4. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Engine version
+      placeholder: "0.2.0  (run: python -c 'import importlib.metadata as m; print(m.version(\"agent-memory-engine-ljf\"))')"
+    validations:
+      required: true
+  - type: input
+    id: embed-mode
+    attributes:
+      label: Embed mode
+      description: From the /health endpoint — `sentence-transformers` (BGE-m3) or `hash-fallback`?
+      placeholder: "sentence-transformers  /  hash-fallback"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / traceback
+      render: shell

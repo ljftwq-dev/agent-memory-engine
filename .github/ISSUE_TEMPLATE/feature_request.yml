@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case or pain point — not the solution.
+      placeholder: "I'm trying to ... but the engine currently can't ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like?
+      description: The behavior or API you imagine. Any alternatives you considered.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - recall (retrieval / gating / rerank)
+        - remember (store / dedup / LLM summary)
+        - forget (Ebbinghaus decay)
+        - server / API
+        - MCP integration
+        - docs / examples
+        - other
+    validations:
+      required: true

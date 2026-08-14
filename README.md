@@ -36,6 +36,10 @@ memory.
 Most memory layers do **pure semantic recall** - nearest neighbors go straight
 into the prompt. This engine is different:
 
+![How it differs — us vs Mem0 vs Zep](docs/images/comparison.png)
+_Honest tradeoffs at a glance. We optimize for local, zero-ops, no write-path
+LLM cost — pick by your constraint, not by star count._
+
 | Feature | What it buys you |
 |---|---|
 | **Two-stage retrieval + gating** | Wide KNN recall (15) → drop pure noise → rerank by `score = α·strength + (1-α)·sim` → top-k. **No more "semantically-adjacent-but-useless" junk in your prompt.** |
@@ -94,6 +98,17 @@ pip install -e ".[all]"        # core + real embeddings + dev deps
 cp .env.example .env           # adjust if needed (defaults work out of the box)
 
 python -m engine.server        # start HTTP server (default :8765)
+```
+
+**One-line install** (PyPI + extras, no clone needed):
+```bash
+curl -fsSL https://raw.githubusercontent.com/ljftwq-dev/agent-memory-engine/main/install.sh | bash
+```
+
+**Docker** (isolated server, memory DB persisted to a volume):
+```bash
+docker build -t agent-memory-engine .
+docker run -p 8765:8765 -v ame-data:/data agent-memory-engine
 ```
 
 The engine works in two modes:
