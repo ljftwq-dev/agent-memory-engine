@@ -189,3 +189,28 @@ def test_remember_without_session_id_is_null():
     remember(topic="t", summary="no session marker here at all")
     results = recall("no session marker here at all", top_k=3)
     assert results[0]["session_id"] is None
+
+
+def test_recall_update_repairs_null_tau():
+    """A memory whose tau was corrupted to NULL is repaired on recall-update,
+    not left NULL forever. COALESCE(tau, 7.0) * 1.5 -> 10.5."""
+    old_ts = (datetime.now() - timedelta(days=20)).isoformat(timespec="seconds")
+    remember(topic="t", summary="null tau repair target", ts=old_ts)
+    conn = db.get_conn()
+    try:
+        conn.execute("UPDATE episodic SET tau = NULL WHERE summary = ?",
+                     ("null tau repair target",))
+        conn.commit()
+    finally:
+        conn.close()
+    recall("null tau repair target", top_k=1, update=True)
+    conn = db.get_conn()
+    try:
+        after = conn.execute(
+            "SELECT tau FROM episodic WHERE summary = ?",
+            ("null tau repair target",),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert after["tau"] is not None
+    assert abs(after["tau"] - 10.5) < 0.01  # COALESCE(NULL, 7.0) * 1.5

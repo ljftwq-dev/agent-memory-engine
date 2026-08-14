@@ -131,7 +131,7 @@ def remember(topic, summary, raw=None, ts=None,
                             new_raw = old_raw or raw
                         conn.execute(
                             "UPDATE episodic SET ts = ?, topic = ?, summary = ?, "
-                            "raw = ?, strength = 1.0, tau = tau * 1.5, session_id = ? "
+                            "raw = ?, strength = 1.0, tau = COALESCE(tau, 7.0) * 1.5, session_id = ? "
                             "WHERE rowid = ?",
                             (ts, topic, summary, new_raw, session_id, rid),
                         )

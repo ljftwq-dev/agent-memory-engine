@@ -189,8 +189,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not q:
                     self._err(400, "missing query param 'q'")
                     return
-                k = int(qs.get("k", ["3"])[0])
+                try:
+                    k = int(qs.get("k", ["3"])[0])
+                except (ValueError, TypeError):
+                    self._err(400, "invalid 'k' (must be an integer)")
+                    return
                 do_update = qs.get("update", ["true"])[0].lower() in ("1", "true", "yes")
+                if self._READ_ONLY:
+                    do_update = False  # read-only mode must never mutate memory strength/tau
                 # ?rerank=1/0 overrides the config default for this request;
                 # absent => config.reranker_enable() (the configured default).
                 do_rerank = None
@@ -202,7 +208,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if url.path == "/recent":
-                k = int(qs.get("k", ["5"])[0])
+                try:
+                    k = int(qs.get("k", ["5"])[0])
+                except (ValueError, TypeError):
+                    self._err(400, "invalid 'k' (must be an integer)")
+                    return
                 results = get_recent(k=k)
                 self._send(200, {"ok": True, "count": len(results), "results": results})
                 return
@@ -212,7 +222,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not q:
                     self._err(400, "missing query param 'q'")
                     return
-                k = int(qs.get("k", ["5"])[0])
+                try:
+                    k = int(qs.get("k", ["5"])[0])
+                except (ValueError, TypeError):
+                    self._err(400, "invalid 'k' (must be an integer)")
+                    return
                 results = search_keyword(q, k=k)
                 self._send(200, {"ok": True, "query": q, "count": len(results),
                                  "results": results})
