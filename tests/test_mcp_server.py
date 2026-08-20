@@ -8,6 +8,16 @@ returned a BM25-only hit. These are pure-function tests (no DB / model / HTTP).
 
 Run:  pytest -q tests/test_mcp_server.py
 """
+import pytest
+
+# The mcp package is an optional extra (pyproject: [project.optional-dependencies].mcp).
+# Skip the whole module when it isn't installed (e.g. CI only installs ".[dev]");
+# _format_recall itself is a pure function, but importing engine.mcp_server pulls
+# in FastMCP at module level.
+pytest.importorskip(
+    "mcp", reason="mcp extra not installed (pip install '.[mcp]')"
+)
+
 from engine.mcp_server import _format_recall
 
 
