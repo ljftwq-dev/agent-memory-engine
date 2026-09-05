@@ -42,12 +42,18 @@ reranker = [
 mcp = [
     "mcp>=1.0",
 ]
+# Optional word-level Chinese tokenization for the BM25 branch (docs + queries).
+# Without it Chinese falls back to per-character tokens (still works, less precise).
+jieba = [
+    "jieba>=0.42",
+]
 # LLM summarization uses only the stdlib urllib, no extra deps needed.
 dev = ["pytest>=7.0"]
 all = [
     "sentence-transformers>=2.2",
     "modelscope>=1.10",
     "mcp>=1.0",
+    "jieba>=0.42",
     "pytest>=7.0",
 ]
 

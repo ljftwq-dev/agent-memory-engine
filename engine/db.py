@@ -41,6 +41,10 @@ def get_conn(db_path=None):
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.row_factory = sqlite3.Row
+    # CJK expansion for the FTS5 index side (see engine/tokenize.py; registered
+    # per-connection because the sync triggers call it as a SQL function).
+    from .tokenize import fts_index_text
+    conn.create_function("ame_fts_index", 1, fts_index_text, deterministic=True)
     return conn
 
 
@@ -171,9 +175,17 @@ def init_fts(conn):
     """Create the FTS5 external-content index over episodic + sync triggers.
 
     Idempotent. No-op if FTS5 is unavailable. Safe to call on every init_db.
+    Drops and rebuilds the index each time (cheap; also re-applies the CJK
+    expansion to existing rows after upgrades).
     """
     if not fts5_available():
         return
+    conn.executescript("""
+        DROP TRIGGER IF EXISTS episodic_fts_ai;
+        DROP TRIGGER IF EXISTS episodic_fts_ad;
+        DROP TRIGGER IF EXISTS episodic_fts_au;
+        DROP TABLE IF EXISTS episodic_fts;
+    """)
     conn.execute("""
         CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5(
             topic, summary,
@@ -181,28 +193,29 @@ def init_fts(conn):
             tokenize='unicode61'
         )
     """)
+    # Index side expands CJK runs to single chars (ame_fts_index, registered in
+    # get_conn) so Chinese terms/phrases can actually match; the 'delete'
+    # commands must receive the SAME expanded values that were indexed.
     conn.executescript("""
-        CREATE TRIGGER IF NOT EXISTS episodic_fts_ai AFTER INSERT ON episodic BEGIN
+        CREATE TRIGGER episodic_fts_ai AFTER INSERT ON episodic BEGIN
             INSERT INTO episodic_fts(rowid, topic, summary)
-            VALUES (new.rowid, new.topic, new.summary);
+            VALUES (new.rowid, ame_fts_index(new.topic), ame_fts_index(new.summary));
         END;
-        CREATE TRIGGER IF NOT EXISTS episodic_fts_ad AFTER DELETE ON episodic BEGIN
+        CREATE TRIGGER episodic_fts_ad AFTER DELETE ON episodic BEGIN
             INSERT INTO episodic_fts(episodic_fts, rowid, topic, summary)
-            VALUES('delete', old.rowid, old.topic, old.summary);
+            VALUES('delete', old.rowid, ame_fts_index(old.topic), ame_fts_index(old.summary));
         END;
-        CREATE TRIGGER IF NOT EXISTS episodic_fts_au AFTER UPDATE ON episodic BEGIN
+        CREATE TRIGGER episodic_fts_au AFTER UPDATE ON episodic BEGIN
             INSERT INTO episodic_fts(episodic_fts, rowid, topic, summary)
-            VALUES('delete', old.rowid, old.topic, old.summary);
+            VALUES('delete', old.rowid, ame_fts_index(old.topic), ame_fts_index(old.summary));
             INSERT INTO episodic_fts(rowid, topic, summary)
-            VALUES (new.rowid, new.topic, new.summary);
+            VALUES (new.rowid, ame_fts_index(new.topic), ame_fts_index(new.summary));
         END;
     """)
-    n = conn.execute("SELECT COUNT(*) FROM episodic_fts").fetchone()[0]
-    if n == 0:
-        conn.execute(
-            "INSERT INTO episodic_fts(rowid, topic, summary) "
-            "SELECT rowid, topic, summary FROM episodic"
-        )
+    conn.execute(
+        "INSERT INTO episodic_fts(rowid, topic, summary) "
+        "SELECT rowid, ame_fts_index(topic), ame_fts_index(summary) FROM episodic"
+    )
     conn.commit()
 
 
@@ -210,8 +223,9 @@ def fts5_search(conn, query, k):
     """BM25 recall via FTS5. Returns ``[(rowid, bm25_score), ...]``.
 
     ``bm25_score`` is FTS5's ``bm25()`` (negative; smaller = more relevant).
-    Empty list on no match or error. Tokenization mirrors unicode61
-    (ASCII words + one CJK char per token) so MATCH works on Chinese.
+    Empty list on no match or error. The index side stores CJK as single chars
+    (see engine/tokenize.py: fts_index_text); queries emit single chars
+    (fallback) or word phrases (jieba) so MATCH works on Chinese.
     """
     if not fts5_available():
         return []
@@ -232,12 +246,11 @@ def fts5_search(conn, query, k):
 
 
 def _fts_tokenize(text):
-    """ASCII words + one CJK char per token (matches unicode61 CJK behavior)."""
-    import re
-    text = (text or "").lower()
-    toks = re.findall(r"[a-z0-9]+", text)
-    toks += re.findall(r"[\u4e00-\u9fff]", text)
-    return toks
+    """MATCH terms for FTS5: ASCII words + CJK per-char (unicode61 behavior),
+    plus multi-char Chinese words as FTS5 phrases when jieba is installed
+    (see engine/tokenize.py)."""
+    from .tokenize import fts_tokens
+    return fts_tokens(text)
 
 
 # ---------------------------------------------------------------------------

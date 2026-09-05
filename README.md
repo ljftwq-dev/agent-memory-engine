@@ -122,12 +122,24 @@ Any agent talks to it over HTTP:
 
 ```
 GET  /health                 service status
+GET  /metrics                usage counters (observability)
 GET  /recall?q=&k=3          two-stage semantic recall (the core)
 GET  /recent?k=5             latest k memories (by time)
 GET  /search?q=              keyword LIKE match
 POST /remember               store a memory {topic, summary, raw?, ...}
 POST /forget                 run an Ebbinghaus decay pass {purge?, threshold?}
 ```
+
+Tuning the gate threshold / pool sizes / decay? Watch usage over time:
+
+```bash
+curl -s http://127.0.0.1:8765/metrics
+# {"ok": true, "memories_total": 412, "recalls_served": 89,
+#  "avg_results_per_recall": 2.7, "remembers": 64, "remember_merges": 9,
+#  "forgets": 12, "last_forget_purged": 3, "embed_mode": "...", ...}
+```
+
+(Counters are process-local - they reset on server restart.)
 
 Want LLM summarization? Set `AME_LLM_BASE_URL` + `AME_LLM_API_KEY` in `.env`
 (any OpenAI-compatible endpoint). Leave them empty and it's a pure retrieval
@@ -154,6 +166,7 @@ agent-memory-engine/
 │   ├── reranker.py    optional cross-encoder precision rerank
 │   ├── remember.py    store + optional LLM summary + dedup-merge
 │   ├── forget.py      Ebbinghaus decay loop (nightly cron)
+│   ├── tokenize.py    pluggable tokenization (jieba word-level / per-char)
 │   └── server.py      stdlib HTTP server
 ├── examples/
 │   ├── seed_demo.py              load generic demo data

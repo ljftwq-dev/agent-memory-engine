@@ -1,24 +1,18 @@
 """bm25.py - pure-Python BM25 fallback (used only when SQLite FTS5 is unavailable).
 
-Tokenization is intentionally simple and dependency-free:
+Tokenization lives in ``engine/tokenize.py``:
 - ASCII runs -> lowercased word tokens
-- CJK chars  -> one token per character (matches FTS5 unicode61's CJK behavior)
+- CJK -> word-level tokens when `jieba` is installed (optional extra), else
+  one token per character
 
 Standard BM25 (k1=1.5, b=0.75). Score is positive (larger = more relevant).
 RRF in recall.py only uses rank, so the sign difference vs FTS5's negative bm25()
 does not matter.
 """
 import math
-import re
 
 from . import db
-
-
-def _tokenize(text):
-    text = (text or "").lower()
-    tokens = re.findall(r"[a-z0-9]+", text)
-    tokens += re.findall(r"[\u4e00-\u9fff]", text)
-    return tokens
+from .tokenize import tokens as _tokenize
 
 
 def search(query, k):

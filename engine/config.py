@@ -28,6 +28,7 @@ DEFAULTS = {
     "BACKUP_INTERVAL_HOURS": "6",  # how often to snapshot
     "BACKUP_KEEP": "5",          # keep only the newest N backups
     "SESSION_TIMEOUT_HOURS": "2",  # session goes stale after this long w/o heartbeat
+    "JIEBA_WORDS": "",            # comma-separated extra words for jieba (domain terms)
 }
 
 _loaded = False
@@ -154,3 +155,12 @@ def backup_keep():
 
 def session_timeout_hours():
     return float(get("SESSION_TIMEOUT_HOURS"))
+
+
+def jieba_words():
+    """Extra domain words to register in jieba (AME_JIEBA_WORDS, comma-separated).
+
+    e.g. AME_JIEBA_WORDS="机器学习,因子库,回补" makes those terms single
+    word-level tokens even if jieba's stock dictionary splits them.
+    """
+    return [w.strip() for w in get("JIEBA_WORDS", "").split(",") if w.strip()]
