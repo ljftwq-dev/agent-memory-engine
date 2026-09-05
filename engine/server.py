@@ -6,6 +6,7 @@ Default bind: 127.0.0.1:8765 (localhost only, safe).
 
 Endpoints:
   GET  /health              service status (embed mode/dim, reranker, db path, llm on/off)
+  GET  /metrics             lightweight usage counters (observability)
   GET  /recall?q=&k=3       two-stage semantic recall, top-k (?rerank=1 to force cross-encoder)
   GET  /recent?k=5          latest k memories (by time, desc)
   GET  /search?q=           keyword LIKE match
@@ -54,7 +55,7 @@ button:hover{background:#1f3a5f}
 .tag{display:inline-block;background:#ddf4ff;color:#0969da;padding:2px 6px;border-radius:3px;font-size:11px;margin-left:4px}
 </style></head><body>
 <h1>Agent Memory Engine</h1>
-<p class="sub">dashboard · <a href="https://github.com/ljftwq-dev/agent-memory-engine" target="_blank">github</a></p>
+<p class="sub">dashboard · <a href="https://github.com/ljftwq-dev/agent-memory-engine" target="_blank">github</a> · <a href="/metrics">metrics</a></p>
 <div class="card">
   <h3>Recall</h3>
   <input id="q" type="text" placeholder="query... e.g. 'vector search'">
@@ -108,6 +109,63 @@ def get_recent(k=5):
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Lightweight observability (issue #2): module-level counters + one COUNT(*).
+# Process-local (reset on restart), enough to see usage while tuning
+# gate threshold / pool size / decay. Plain JSON, no Prometheus.
+# ---------------------------------------------------------------------------
+_STATS_LOCK = threading.Lock()
+_STATS = {
+    "started_ts": None,        # time.time() at server start
+    "recalls_served": 0,       # successful GET /recall count
+    "recall_results": 0,       # sum of results returned (for the average)
+    "remembers": 0,            # successful POST /remember count
+    "remember_merges": 0,      # ...of which were dedup merges
+    "forgets": 0,              # successful POST /forget count
+    "last_forget_purged": None,  # memories purged by the last /forget
+}
+
+
+def _bump(**kw):
+    with _STATS_LOCK:
+        for key, val in kw.items():
+            if key in _STATS:
+                _STATS[key] += val
+
+
+def _set_stat(key, val):
+    with _STATS_LOCK:
+        if key in _STATS:
+            _STATS[key] = val
+
+
+def _metrics_snapshot():
+    """Assemble the /metrics payload: counters + live SQLite COUNT(*)."""
+    conn = db.get_conn()
+    try:
+        memories_total = conn.execute(
+            "SELECT COUNT(*) FROM episodic").fetchone()[0]
+    finally:
+        conn.close()
+    with _STATS_LOCK:
+        s = dict(_STATS)
+    avg = (s["recall_results"] / s["recalls_served"]) if s["recalls_served"] else None
+    uptime = (time.time() - s["started_ts"]) if s["started_ts"] else None
+    return {
+        "ok": True,
+        "memories_total": memories_total,
+        "recalls_served": s["recalls_served"],
+        "avg_results_per_recall": round(avg, 2) if avg is not None else None,
+        "remembers": s["remembers"],
+        "remember_merges": s["remember_merges"],
+        "forgets": s["forgets"],
+        "last_forget_purged": s["last_forget_purged"],
+        "embed_mode": embed.mode(),
+        "embed_dim": embed.dim(),
+        "uptime_seconds": round(uptime, 1) if uptime is not None else None,
+    }
 
 
 def search_keyword(q, k=5):
@@ -184,6 +242,10 @@ class Handler(BaseHTTPRequestHandler):
                 })
                 return
 
+            if url.path == "/metrics":
+                self._send(200, _metrics_snapshot())
+                return
+
             if url.path == "/recall":
                 q = (qs.get("q", [""])[0] or "").strip()
                 if not q:
@@ -203,6 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                 if "rerank" in qs:
                     do_rerank = qs["rerank"][0].lower() in ("1", "true", "yes", "on")
                 results = do_recall(q, top_k=k, update=do_update, rerank=do_rerank)
+                _bump(recalls_served=1, recall_results=len(results))
                 self._send(200, {"ok": True, "query": q, "count": len(results),
                                  "updated": do_update, "results": results})
                 return
@@ -270,6 +333,8 @@ class Handler(BaseHTTPRequestHandler):
                     ts=data.get("ts"), dedup=dedup, summarize=summarize,
                     session_id=data.get("session_id"),
                 )
+                _bump(remembers=1,
+                      **({"remember_merges": 1} if action == "merged" else {}))
                 self._send(200, {"ok": True, "id": rowid, "action": action,
                                  "topic": topic})
                 return
@@ -278,6 +343,8 @@ class Handler(BaseHTTPRequestHandler):
                 purge = bool(data.get("purge", False))
                 threshold = float(data.get("threshold", 0.05))
                 r = decay_all(threshold=threshold, purge=purge)
+                _bump(forgets=1)
+                _set_stat("last_forget_purged", r.get("purged"))
                 self._send(200, {"ok": True, **r})
                 return
 
@@ -352,6 +419,8 @@ def main():
 
     Handler._READ_ONLY = args.read_only
     db.init_db(dim=embed.dim())
+    with _STATS_LOCK:
+        _STATS["started_ts"] = time.time()
     if config.backup_enable():
         threading.Thread(target=_backup_loop, daemon=True, name="ame-backup").start()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
@@ -368,6 +437,7 @@ def main():
     print("=" * 60)
     print("  endpoints:")
     print("    GET  /health")
+    print("    GET  /metrics")
     print("    GET  /recall?q=...&k=3       (?rerank=1 forces cross-encoder rerank)")
     print("    GET  /recent?k=5")
     print("    GET  /search?q=...")

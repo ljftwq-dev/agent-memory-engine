@@ -92,12 +92,24 @@ python -m engine.server        # 启动 HTTP 服务（默认端口 :8765）
 
 ```
 GET  /health                 服务状态
+GET  /metrics                使用量计数（可观测性）
 GET  /recall?q=&k=3          两阶段语义召回（核心）
 GET  /recent?k=5             最近 k 条记忆（按时间）
 GET  /search?q=              关键词 LIKE 匹配
 POST /remember               存一条记忆 {topic, summary, raw?, ...}
 POST /forget                 跑一次艾宾浩斯衰减 {purge?, threshold?}
 ```
+
+调门槛/池子大小/衰减参数时，看看使用量趋势：
+
+```bash
+curl -s http://127.0.0.1:8765/metrics
+# {"ok": true, "memories_total": 412, "recalls_served": 89,
+#  "avg_results_per_recall": 2.7, "remembers": 64, "remember_merges": 9,
+#  "forgets": 12, "last_forget_purged": 3, "embed_mode": "...", ...}
+```
+
+（计数器是进程级的——服务重启后归零。）
 
 想要 LLM 摘要？在 `.env` 里设 `AME_LLM_BASE_URL` + `AME_LLM_API_KEY`（任何 OpenAI 兼容端点）。留空就是一个纯检索引擎——照样完全可用。
 
