@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "agent-memory-mcp",
+      "env": {
+        "AME_HTTP_URL": "http://127.0.0.1:8765"
+      }
+    }
+  }
+}
