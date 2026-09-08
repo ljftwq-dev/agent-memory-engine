@@ -105,10 +105,16 @@ python -m engine.server        # start HTTP server (default :8765)
 curl -fsSL https://raw.githubusercontent.com/ljftwq-dev/agent-memory-engine/main/install.sh | bash
 ```
 
+**Windows** (PowerShell, one line too):
+```powershell
+irm https://raw.githubusercontent.com/ljftwq-dev/agent-memory-engine/main/install.ps1 | iex
+```
+
 **Docker** (isolated server, memory DB persisted to a volume):
 ```bash
 docker build -t agent-memory-engine .
-docker run -p 8765:8765 -v ame-data:/data agent-memory-engine
+# publish to localhost only; expose further only together with AME_API_TOKEN
+docker run -p 127.0.0.1:8765:8765 -v ame-data:/data agent-memory-engine
 ```
 
 The engine works in two modes:
@@ -138,6 +144,31 @@ curl -s http://127.0.0.1:8765/metrics
 #  "avg_results_per_recall": 2.7, "remembers": 64, "remember_merges": 9,
 #  "forgets": 12, "last_forget_purged": 3, "embed_mode": "...", ...}
 ```
+
+### Security
+
+The server binds to `127.0.0.1` only — by default nothing outside your machine
+can reach it. Whenever you expose it further (Docker publish beyond localhost,
+a reverse proxy, a shared host), switch on bearer-token auth:
+
+```bash
+export AME_API_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+python -m engine.server
+curl -s -H "Authorization: Bearer $AME_API_TOKEN" http://127.0.0.1:8765/recall?q=test
+```
+
+With `AME_API_TOKEN` set, every endpoint requires the `Authorization: Bearer`
+header — except `/health` and `/metrics`, which stay open so health checks
+keep working.
+
+### Concurrency model
+
+One server process; writes are serialized in-process (SQLite + the vec0 index
+are not safe under concurrent writes), reads run on all threads. Connections
+are opened in WAL mode with a 5 s `busy_timeout`, so concurrent readers never
+block behind a writer, and accidental cross-process access (e.g. the MCP
+stdio server against the same DB file) degrades gracefully instead of raising
+`database is locked`.
 
 (Counters are process-local - they reset on server restart.)
 

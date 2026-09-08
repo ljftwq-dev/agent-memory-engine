@@ -83,6 +83,11 @@ cp .env.example .env           # 按需调整（默认值开箱即用）
 python -m engine.server        # 启动 HTTP 服务（默认端口 :8765）
 ```
 
+**Windows 一行安装**（PowerShell）：
+```powershell
+irm https://raw.githubusercontent.com/ljftwq-dev/agent-memory-engine/main/install.ps1 | iex
+```
+
 引擎有两种工作模式：
 
 - **没装 embedding 模型** → 自动哈希兜底（确定性、可复现、*无真实语义*）。适合试 API，召回质量不行。想要真实语义就装 `[embed]` 扩展（BGE-m3）。
@@ -110,6 +115,24 @@ curl -s http://127.0.0.1:8765/metrics
 ```
 
 （计数器是进程级的——服务重启后归零。）
+
+### 安全
+
+服务默认只绑 `127.0.0.1`——不开端口外网就摸不到。一旦要进一步暴露
+（Docker 发布到非回环地址、反代、共享主机），请打开 Bearer Token 鉴权：
+
+```bash
+export AME_API_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+python -m engine.server
+curl -s -H "Authorization: Bearer $AME_API_TOKEN" http://127.0.0.1:8765/recall?q=test
+```
+
+设置了 `AME_API_TOKEN` 后，所有端点都要求 `Authorization: Bearer` 头——
+唯独 `/health` 和 `/metrics` 保持开放，健康检查不受影响。
+
+### 并发模型
+
+单服务进程；写操作在进程内串行（SQLite + vec0 索引不支持并发写），读操作多线程并发。连接以 WAL 模式 + 5 秒 `busy_timeout` 打开：并发读不会被写阻塞，偶发的跨进程访问（比如 MCP stdio 服务读同一个 DB 文件）也能优雅降级，而不是直接抛 `database is locked`。
 
 想要 LLM 摘要？在 `.env` 里设 `AME_LLM_BASE_URL` + `AME_LLM_API_KEY`（任何 OpenAI 兼容端点）。留空就是一个纯检索引擎——照样完全可用。
 

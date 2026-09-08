@@ -67,3 +67,6 @@ Issues = "https://github.com/ljftwq-dev/agent-memory-engine/issues"
 
 [tool.setuptools]
 packages = ["engine"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
