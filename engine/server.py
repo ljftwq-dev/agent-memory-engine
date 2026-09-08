@@ -3,6 +3,8 @@
 Runs persistently so the embedding model loads once (no per-call startup cost).
 Uses the standard library http.server (no FastAPI/Flask dependency).
 Default bind: 127.0.0.1:8765 (localhost only, safe).
+Auth: set AME_API_TOKEN to require "Authorization: Bearer <token>" on every
+endpoint except /health and /metrics (issue #4).
 
 Endpoints:
   GET  /health              service status (embed mode/dim, reranker, db path, llm on/off)
@@ -22,6 +24,7 @@ Run:
   python -m engine.server --port 8766 --host 0.0.0.0
 """
 import argparse
+import hmac
 import json
 import os
 import sys
@@ -36,6 +39,31 @@ from . import config, db, embed, reranker
 from .recall import recall as do_recall
 from .remember import remember as do_remember
 from .forget import decay_all
+
+
+# ---------------------------------------------------------------------------
+# Opt-in bearer-token auth (issue #4). AME_API_TOKEN empty = auth disabled
+# (default; safe with the localhost-only bind). When set, every endpoint
+# requires "Authorization: Bearer <token>" except the two health-check paths.
+# ---------------------------------------------------------------------------
+AUTH_EXEMPT_PATHS = {"/health", "/metrics"}
+
+
+def _bearer_ok(path, auth_header):
+    """Auth gate for one request. ``path`` is the URL path (no query string);
+    ``auth_header`` is the raw Authorization header value (or None)."""
+    token = config.api_token()
+    if not token:
+        return True                                # auth disabled — passthrough
+    if path in AUTH_EXEMPT_PATHS:
+        return True                                # health checks stay open
+    if auth_header:
+        parts = auth_header.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            # constant-time compare; encode() so non-ASCII tokens can't raise
+            return hmac.compare_digest(parts[1].strip().encode("utf-8"),
+                                       token.encode("utf-8"))
+    return False
 
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
@@ -199,6 +227,24 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code, msg):
         self._send(code, {"ok": False, "error": msg})
 
+    def _auth_reject(self, path):
+        """Issue #4: if AME_API_TOKEN is set and the request carries no valid
+        Bearer token, answer 401 and return True (caller must return)."""
+        if _bearer_ok(path, self.headers.get("Authorization")):
+            return False
+        body = json.dumps({"ok": False,
+                           "error": "unauthorized: missing or invalid bearer token "
+                                    "(set Authorization: Bearer <AME_API_TOKEN>)"},
+                          ensure_ascii=False).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("WWW-Authenticate", 'Bearer realm="agent-memory-engine"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _send_html(self, html):
         body = html.encode("utf-8")
         self.send_response(200)
@@ -218,6 +264,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             url = urlparse(self.path)
             qs = parse_qs(url.query)
+
+            if self._auth_reject(url.path):
+                return
 
             if url.path in ("/", "/ui"):
                 html = DASHBOARD_HTML
@@ -307,11 +356,13 @@ class Handler(BaseHTTPRequestHandler):
                              "traceback": traceback.format_exc()})
 
     def do_POST(self):
-        if self._READ_ONLY and urlparse(self.path).path in self.WRITE_PATHS:
+        url = urlparse(self.path)
+        if self._auth_reject(url.path):
+            return
+        if self._READ_ONLY and url.path in self.WRITE_PATHS:
             self._err(403, "server is in read-only mode; write endpoints disabled")
             return
         try:
-            url = urlparse(self.path)
             length = int(self.headers.get("Content-Length", "0") or "0")
             raw = self.rfile.read(length).decode("utf-8") if length else ""
             data = json.loads(raw) if raw else {}
@@ -434,6 +485,7 @@ def main():
     print(f"  db path     : {config.db_path()}")
     print(f"  llm enabled : {config.llm_enabled()}")
     print(f"  read-only   : {args.read_only}")
+    print(f"  auth        : {'bearer token (AME_API_TOKEN)' if config.api_token() else 'disabled (localhost default)'}")
     print("=" * 60)
     print("  endpoints:")
     print("    GET  /health")

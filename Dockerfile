@@ -1,7 +1,8 @@
 # Agent Memory Engine — self-contained, local-first memory for coding agents.
 #
 # Build:  docker build -t agent-memory-engine .
-# Run:    docker run -p 8765:8765 -v ame-data:/data agent-memory-engine
+# Run:    docker run -p 127.0.0.1:8765:8765 -v ame-data:/data agent-memory-engine
+# (publish to localhost only; if you must expose further, set AME_API_TOKEN)
 # The SQLite memory DB persists in the ame-data volume.
 FROM python:3.11-slim
 

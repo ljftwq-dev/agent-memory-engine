@@ -9,6 +9,7 @@ import os
 
 DEFAULTS = {
     "DB_PATH": os.path.join(os.path.expanduser("~"), ".agent-memory", "memory.db"),
+    "API_TOKEN": "",            # empty = HTTP auth disabled; set to require Bearer token
     "EMBED_MODEL": "BAAI/bge-m3",
     "EMBED_DIM": "1024",
     "LLM_BASE_URL": "",          # empty = LLM summarization disabled
@@ -75,6 +76,17 @@ def get(key, default=None):
 
 def db_path():
     return get("DB_PATH")
+
+
+def api_token():
+    """Optional bearer token protecting the HTTP API (AME_API_TOKEN).
+
+    Empty (default) = auth disabled, which is fine for the default
+    localhost-only bind. When set, every request must carry
+    ``Authorization: Bearer <token>`` — except /health and /metrics,
+    which stay open so health checks keep working.
+    """
+    return get("API_TOKEN")
 
 
 def embed_model():
