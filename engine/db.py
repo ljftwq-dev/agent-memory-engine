@@ -32,12 +32,22 @@ WRITE_LOCK = threading.Lock()
 
 
 def get_conn(db_path=None):
-    """Open a connection, auto-loading the sqlite-vec extension."""
+    """Open a connection, auto-loading the sqlite-vec extension.
+
+    Concurrency hardening (issue #5): WAL lets readers proceed while a writer
+    holds the DB, and busy_timeout makes short lock contention wait (5 s)
+    instead of failing fast with "database is locked". In-process writes are
+    still serialized by WRITE_LOCK below; the pragmas cover concurrent readers
+    (the threaded HTTP server) and accidental cross-process access (e.g. the
+    MCP stdio server talking to the same DB file).
+    """
     path = db_path or config.db_path()
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=5.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.row_factory = sqlite3.Row
