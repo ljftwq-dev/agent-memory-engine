@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-09
+
+Hardening & platforms pass — security, concurrency, and Windows are now first-class.
+
+### Added
+- **Bearer-token auth** for the HTTP API (`AME_API_TOKEN`, opt-in): when set, every endpoint requires `Authorization: Bearer` — except `/health` and `/metrics`, which stay open for health checks. Constant-time compare, `WWW-Authenticate` on 401. Docker example now publishes to localhost only.
+- **`GET /metrics`** endpoint — usage counters (`memories_total`, `recalls_served`, `avg_results_per_recall`, `remember_merges`, `forgets`, `embed_mode`, ...) for lightweight observability.
+- **Windows support** — one-line `install.ps1` installer + `windows-latest` in CI (hash-fallback path).
+- **Pluggable jieba tokenization** — word-level Chinese BM25 indexing (`[jieba]` extra; per-char fallback stays default); fixes CJK FTS indexing.
+- **Cursor MCP integration example** (`examples/cursor/` — mcp.json + agent rules).
+- **Auth & concurrency contract documented** in README (when to enable the token, WAL semantics).
+
+### Changed
+- Server binds to `127.0.0.1` only by default — nothing outside the machine can reach it unless you explicitly publish further.
+- README positioning: "agent-agnostic HTTP memory API, MCP-ready".
+
+### Fixed
+- **WAL + `busy_timeout` on every connection** — concurrent readers never block behind a writer; cross-process access (e.g. MCP stdio against the same DB file) degrades gracefully instead of raising `database is locked`. Ships with an N-thread write stress test.
+- Engine robustness: validate `k` param, honor read-only mode on recall, auto-repair NULL `tau` rows.
+
 ## [0.1.1] - 2026-07-28
 
 Project "storefront" pass — the repo now shows what it does, not just describes it.
@@ -39,6 +59,7 @@ Initial public release. A long-term memory engine for coding agents.
 - Serialized DB writes + automatic periodic backups (safe snapshots via SQLite online backup).
 - Multi-agent `session_id` tagging to prevent cross-talk between sessions.
 
-[Unreleased]: https://github.com/ljftwq-dev/agent-memory-engine/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ljftwq-dev/agent-memory-engine/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ljftwq-dev/agent-memory-engine/compare/v0.2.0...v0.3.0
 [0.1.1]: https://github.com/ljftwq-dev/agent-memory-engine/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ljftwq-dev/agent-memory-engine/releases/tag/v0.1.0

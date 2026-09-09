@@ -29,9 +29,15 @@ memory.
 > engineering tradeoff: borrow its **two-stage retrieval + gating**, drop the
 > full RL (dialogue has no clean reward signal - see [design.md](docs/design.md)).
 
+> **Dogfooded hard, not a demo.** The author's daily-driver setup has
+> accumulated **3,300+ real memories** across **140+ agent sessions** over
+> **4.5 months** of continuous multi-agent use. The hard parts of this design —
+> near-dup merging, "semantic anchor" short queries, session isolation — were
+> all shaped by that production workload, not a whiteboard.
+
 ---
 
-## Why it (differs from Mem0 / Chroma)
+## How it differs (vs Mem0 / Zep)
 
 Most memory layers do **pure semantic recall** - nearest neighbors go straight
 into the prompt. This engine is different:
