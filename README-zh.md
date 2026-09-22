@@ -138,6 +138,20 @@ curl -s -H "Authorization: Bearer $AME_API_TOKEN" http://127.0.0.1:8765/recall?q
 
 想要 LLM 摘要？在 `.env` 里设 `AME_LLM_BASE_URL` + `AME_LLM_API_KEY`（任何 OpenAI 兼容端点）。留空就是一个纯检索引擎——照样完全可用。
 
+### 设备健康（GPU 与静默 CPU 降级）
+
+`GET /health` 返回 `embed_device` —— 嵌入模型实际落在的设备：
+
+| `embed_device` | 含义 | 处置 |
+|---|---|---|
+| `cuda` | 正常——GPU 快速路径（recall 约 0.1 秒） | 无 |
+| `cpu` | 降级——装载时 CUDA 不可用 | 系统热身后重启服务 |
+| `null` 且 `embed_mode: hash-fallback` | 模型彻底没装上 | 查日志、修模型路径 |
+
+加载器显式钉 device，落到 CPU 时打醒目 `WARNING`——降级在日志和 `/health` 里都看得见，不再是无声变慢。装载中途 CUDA 失败会显式重试一次 CPU："慢而活着"好过"死"。
+
+**Windows 自启提示**：把服务注册为登录任务时，加约 2 分钟触发延迟——登录瞬间启动会和 GPU 驱动竞态，这是 CPU 降级（或 CUDA 上下文损坏）最常见的原因。
+
 灌点演示数据试试：
 
 ```bash

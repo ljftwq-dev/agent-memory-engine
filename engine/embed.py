@@ -21,6 +21,7 @@ from . import config
 
 _MODEL = None
 _MODE = None
+_DEVICE = None
 _LOAD_LOCK = threading.Lock()
 
 
@@ -60,6 +61,7 @@ def _load_model():
         if _MODE is not None:      # re-check under the lock
             return
         model_name = config.embed_model()
+        global _DEVICE
         try:
             from sentence_transformers import SentenceTransformer
             path = _local_modelscope_path(model_name)
@@ -71,12 +73,26 @@ def _load_model():
                     path = snapshot_download(model_name)
                 except Exception:
                     path = model_name
-            _MODEL = SentenceTransformer(path)
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if device == "cpu":
+                print("[embed] WARNING: CUDA not available at load time "
+                      "(driver race? GPU busy?) - running on CPU, recalls will be slow")
+            try:
+                _MODEL = SentenceTransformer(path, device=device)
+            except Exception as dev_err:
+                if device == "cuda":
+                    print(f"[embed] WARNING: CUDA load failed ({dev_err}); "
+                          "falling back to CPU explicitly")
+                    device = "cpu"
+                    _MODEL = SentenceTransformer(path, device="cpu")
+            _DEVICE = device
             _MODE = "sentence-transformers"
-            print(f"[embed] loaded {model_name} (mode={_MODE})")
+            print(f"[embed] loaded {model_name} (mode={_MODE}, device={_DEVICE})")
         except Exception as e:
             _MODEL = None
             _MODE = "hash-fallback"
+            _DEVICE = None
             print(f"[embed] WARNING: model load failed: {e}")
             print(f"[embed] falling back to hash pseudo-embedding (no semantics)")
 
@@ -126,6 +142,15 @@ def dim():
 def mode():
     _load_model()
     return _MODE
+
+
+def device():
+    """Device the embedding model actually landed on ('cuda'/'cpu'/None).
+
+    Exposed via /health so degradation (silent CPU fallback) is observable.
+    """
+    _load_model()
+    return _DEVICE
 
 
 if __name__ == "__main__":

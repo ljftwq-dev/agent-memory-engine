@@ -283,6 +283,7 @@ class Handler(BaseHTTPRequestHandler):
                     "service": "agent-memory-engine",
                     "embed_mode": embed.mode(),
                     "embed_dim": embed.dim(),
+                    "embed_device": embed.device(),
                     "reranker_enabled": config.reranker_enable(),
                     "reranker_mode": reranker.cached_mode(),
                     "db_path": config.db_path(),
@@ -480,6 +481,7 @@ def main():
     print("=" * 60)
     print(f"  listening   : http://{args.host}:{args.port}")
     print(f"  embed mode  : {embed.mode()}")
+    print(f"  embed device: {embed.device()}")
     print(f"  embed dim   : {embed.dim()}")
     print(f"  reranker    : {'enabled' if config.reranker_enable() else 'disabled'} ({config.reranker_model()})")
     print(f"  db path     : {config.db_path()}")

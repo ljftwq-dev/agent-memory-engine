@@ -182,6 +182,26 @@ Want LLM summarization? Set `AME_LLM_BASE_URL` + `AME_LLM_API_KEY` in `.env`
 (any OpenAI-compatible endpoint). Leave them empty and it's a pure retrieval
 engine - still fully usable.
 
+### Device health (GPU vs silent CPU fallback)
+
+`GET /health` reports `embed_device` — the device the embedding model actually
+landed on:
+
+| `embed_device` | Meaning | Action |
+|---|---|---|
+| `cuda` | Normal — GPU fast path (recalls in ~0.1 s) | none |
+| `cpu` | Degraded — CUDA was unavailable at load time | restart the server once the system is warm |
+| `null` + `embed_mode: hash-fallback` | Model failed to load entirely | check the log, fix the model path |
+
+The loader pins the device explicitly and logs a loud `WARNING` when it falls
+back to CPU — degradation is visible in the log and in `/health`, not silent
+slowness. A CUDA failure mid-load retries once on CPU explicitly: slow-but-alive
+beats dead.
+
+**Windows autostart tip:** if you register the server as a logon task, add a
+~2-minute trigger delay. Launching the instant you log in races the GPU driver
+and is the most common cause of a CPU-degraded (or CUDA-broken) engine.
+
 Seed some demo data and try it:
 
 ```bash

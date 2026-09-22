@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`embed_device` in `GET /health`** — the device the embedding model actually landed on (`cuda` / `cpu` / `null`), so silent degradation is observable at a glance (see README "Device health").
+
+### Fixed
+- **Silent CPU fallback** — the embedding model is now loaded with an explicitly pinned device: `cuda` when available, else `cpu` with a loud `WARNING` log; a CUDA failure mid-load retries once on CPU instead of crashing into hash-fallback. Most common trigger: Windows logon-autostart racing the GPU driver (add a ~2 min trigger delay).
+
 ## [0.3.0] - 2026-09-09
 
 Hardening & platforms pass — security, concurrency, and Windows are now first-class.
