@@ -476,11 +476,15 @@ def main():
     if config.backup_enable():
         threading.Thread(target=_backup_loop, daemon=True, name="ame-backup").start()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print("=" * 60)
-    print("  Agent Memory Engine")
-    print("=" * 60)
-    print(f"  listening   : http://{args.host}:{args.port}")
-    print(f"  embed mode  : {embed.mode()}")
+    print("=" * 60, flush=True)
+    print("  Agent Memory Engine", flush=True)
+    print("=" * 60, flush=True)
+    print(f"  listening   : http://{args.host}:{args.port}", flush=True)
+    # Print BEFORE the model load: on a first start the load includes a ~2.3GB
+    # model download (minutes). Without this line the log looks dead meanwhile.
+    print("  loading embedding model (first run downloads ~2.3GB)...", flush=True)
+    _mode = embed.mode()
+    print(f"  embed mode  : {_mode}")
     print(f"  embed device: {embed.device()}")
     print(f"  embed dim   : {embed.dim()}")
     print(f"  reranker    : {'enabled' if config.reranker_enable() else 'disabled'} ({config.reranker_model()})")
@@ -502,6 +506,15 @@ def main():
     print("    POST /session/heartbeat  {session_id, progress?, task?}")
     print("    POST /session/finish     {session_id, result?}")
     print("=" * 60)
+    if _mode == "hash-fallback":
+        # Interrupted 'pip install [all]' leaves the package importable but
+        # sentence-transformers missing; the engine still runs on pseudo-random
+        # hash vectors. Make that state impossible to miss at startup.
+        print("!" * 60)
+        print("  !! WARNING: hash-fallback embedding - memories have NO semantics")
+        print("  Likely cause: '[all]' extras missing or a pip install was interrupted.")
+        print('  Fix: python -m pip install --force-reinstall "agent-memory-engine-ljf[all]"')
+        print("!" * 60)
     print("  Ctrl+C to stop\n")
     try:
         server.serve_forever()

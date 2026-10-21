@@ -66,13 +66,18 @@ def _load_model():
             from sentence_transformers import SentenceTransformer
             path = _local_modelscope_path(model_name)
             if path:
-                print(f"[embed] local cache hit: {path}")
+                print(f"[embed] local cache hit: {path}", flush=True)
             else:
+                # Loud stdout notice BEFORE the (possibly minutes-long) download:
+                # snapshot_download progress only goes to stderr, so without this
+                # a first start on a fresh box looks like a hang.
+                print(f"[embed] no local cache - downloading {model_name} "
+                      f"(~2.3GB), first start can take several minutes", flush=True)
                 try:
                     from modelscope import snapshot_download
                     path = snapshot_download(model_name)
                 except Exception:
-                    path = model_name
+                    path = model_name  # SentenceTransformer falls back to HF hub
             import torch
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if device == "cpu":
@@ -86,6 +91,11 @@ def _load_model():
                           "falling back to CPU explicitly")
                     device = "cpu"
                     _MODEL = SentenceTransformer(path, device="cpu")
+                else:
+                    # CPU load failed too - re-raise so the outer handler can
+                    # degrade to hash-fallback instead of continuing with
+                    # _MODEL=None while claiming mode=sentence-transformers.
+                    raise
             _DEVICE = device
             _MODE = "sentence-transformers"
             print(f"[embed] loaded {model_name} (mode={_MODE}, device={_DEVICE})")

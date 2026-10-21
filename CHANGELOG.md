@@ -6,10 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-20
+
+Install-and-startup reliability pass — fixes reported by a fresh install on a
+clean Windows 11 + Python 3.13 machine, plus one hidden regression caught by
+the resulting test run.
+
 ### Added
 - **`embed_device` in `GET /health`** — the device the embedding model actually landed on (`cuda` / `cpu` / `null`), so silent degradation is observable at a glance (see README "Device health").
 
 ### Fixed
+- **Regression in the device-pin fix (unreleased)**: when the embedding model failed to load on a **CPU-only** machine, the inner `except` swallowed the error and the engine kept running with `mode=sentence-transformers` but `_MODEL=None` — every later `encode()` crashed with `AttributeError` instead of degrading to hash-fallback. The except now re-raises on CPU so the outer handler performs the proper fallback. This was invisible in CI (no sentence-transformers installed there) and broke 30 tests on real ST machines.
+- **`mcp` dependency capped to `<2`** — the `[mcp]`/`[all]` extras used `mcp>=1.0` uncapped; pip now resolves mcp 2.x, where `FastMCP` was renamed to `MCPServer`, so `agent-memory-mcp` crashed on startup with `ModuleNotFoundError: mcp.server.fastmcp`. Fresh installs get a working mcp 1.x again (reported on a clean Win11 + Python 3.13 box).
+- **First-start "look-dead" fix** — the server banner now prints (with `flush=True`) *before* the embedding model loads, and a loud stdout notice announces the ~2.3GB BGE-m3 download before it starts (progress previously only visible on stderr; a first start looked like an 8-minute hang).
+- **Loud hash-fallback warning at startup** — an interrupted `pip install [all]` leaves the engine running on pseudo-random hash vectors with only a subtle hint; the startup banner now prints a full-width `!! WARNING` block with the exact reinstall command (hash-fallback is also still visible via `embed_mode` in `/health` and `/metrics`).
 - **Silent CPU fallback** — the embedding model is now loaded with an explicitly pinned device: `cuda` when available, else `cpu` with a loud `WARNING` log; a CUDA failure mid-load retries once on CPU instead of crashing into hash-fallback. Most common trigger: Windows logon-autostart racing the GPU driver (add a ~2 min trigger delay).
 
 ## [0.3.0] - 2026-09-09

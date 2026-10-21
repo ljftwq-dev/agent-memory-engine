@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-memory-engine-ljf"
-version = "0.3.0"
+version = "0.3.1"
 description = "Two-stage retrieval + gating long-term memory engine for coding agents."
 readme = "README.md"
 license = {text = "MIT"}
@@ -39,8 +39,9 @@ reranker = [
 ]
 # MCP server: expose the engine to MCP-capable IDEs (opencode / ZCode / Claude
 # Code). A thin HTTP proxy - needs the HTTP server (server.py) running.
+# Capped <2: mcp 2.x renamed FastMCP -> MCPServer and broke the v1 import.
 mcp = [
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
 ]
 # Optional word-level Chinese tokenization for the BM25 branch (docs + queries).
 # Without it Chinese falls back to per-character tokens (still works, less precise).
@@ -52,7 +53,7 @@ dev = ["pytest>=7.0"]
 all = [
     "sentence-transformers>=2.2",
     "modelscope>=1.10",
-    "mcp>=1.0",
+    "mcp>=1.0,<2",
     "jieba>=0.42",
     "pytest>=7.0",
 ]
