@@ -25,6 +25,9 @@ Tools exposed:
     finish_session    - mark the session done
     active_sessions   - see what OTHER agents are working on (multi-agent awareness)
     recent            - latest k memories by time
+    social_get_fan    - one fan's card (relation/favor/impressions) for personalized replies
+    social_update_fan - create/update a fan card (favor +/-, impressions, blacklist)
+    social_mood       - get/set the persona agent's persistent mood
 """
 import json
 import os
@@ -236,6 +239,112 @@ def recent(k: int = 5) -> str:
         f"#{m.get('rowid', '?')}  {(m.get('ts', '') or '')[:16]}  {m.get('topic', '')}\n"
         f"    {m.get('summary', '')}" for m in items
     )
+
+
+@mcp.tool()
+def social_get_fan(platform: str, uid: str) -> str:
+    """Look up one fan's social card (relation tier, favor score 0-100,
+    impressions, traits). Use before replying to a commenter/follower so the
+    persona agent can personalize the response ('she remembers you').
+
+    Args:
+        platform: Audience platform id, e.g. 'bilibili'.
+        uid: The user's id on that platform (mid for Bilibili).
+    """
+    try:
+        r = _get("/social/fan", {"platform": platform, "uid": uid})
+    except Exception as e:
+        return _server_down(e)
+    fan = r.get("fan")
+    if not fan:
+        return f"(no card yet for {platform}:{uid})"
+    return (
+        f"{platform}:{uid}  {fan.get('nickname', '')}\n"
+        f"    relation: {fan.get('relation')}   favor: {fan.get('favor')}/100\n"
+        f"    impressions:\n" + "\n".join(
+            f"      - {line}" for line in (fan.get("impressions") or "").splitlines()
+        ) + ("\n    traits:\n" + "\n".join(
+            f"      - {line}" for line in (fan.get("traits") or "").splitlines()
+        ) if fan.get("traits") else "")
+    )
+
+
+@mcp.tool()
+def social_update_fan(platform: str, uid: str, nickname: str = "",
+                      favor: int = -1, favor_delta: int = 0,
+                      impression: str = "", trait: str = "",
+                      relation: str = "", blacklist: bool = False) -> str:
+    """Create or merge-update a fan card. Pass favor_delta for incremental
+    changes (+/-), or favor for an absolute set; impressions/traits append as
+    log lines (last 20 kept). Relation tier auto-derives from favor unless an
+    explicit relation is given; blacklist=True marks 'blocked' (persists until
+    blacklist=False).
+
+    Args:
+        platform: Audience platform id, e.g. 'bilibili'.
+        uid: The user's id on that platform.
+        nickname: Display name (optional, kept if empty).
+        favor: Absolute favor set (0-100). Ignored when negative.
+        favor_delta: Increment applied to current favor (0 = no change).
+        impression: One-line impression to append to this fan's history.
+        trait: One-line trait/note (memes they use, preferences).
+        relation: Manual override ('stranger'|'fan'|'regular'|'friend'|'master').
+        blacklist: True to block, False to unblock, omit to leave as-is.
+    """
+    payload = {"platform": platform, "uid": uid}
+    if nickname:
+        payload["nickname"] = nickname
+    if favor >= 0:
+        payload["favor"] = favor
+    if favor_delta:
+        payload["favor_delta"] = favor_delta
+    if impression:
+        payload["impression"] = impression
+    if trait:
+        payload["trait"] = trait
+    if relation:
+        payload["relation"] = relation
+    payload["blacklist"] = blacklist
+    try:
+        r = _post("/social/fan", payload)
+    except Exception as e:
+        return _server_down(e)
+    fan = r.get("fan", {})
+    return (f"updated {platform}:{uid} -> relation={fan.get('relation')} "
+            f"favor={fan.get('favor')}/100")
+
+
+@mcp.tool()
+def social_mood(label: str = "", valence: int = 0, arousal: int = 0,
+                reason: str = "") -> str:
+    """Get (label empty) or set (label given) the persona agent's current mood.
+    Mood persists across sessions, giving emotional continuity; a short event
+    log is kept. Valence -100..100 (bad..good), arousal 0..100 (calm..excited).
+
+    Args:
+        label: Mood name to set (e.g. 'happy', 'grumpy'). Empty = just read.
+        valence: How positive the mood is (-100..100).
+        arousal: How energized the mood is (0..100).
+        reason: Why the mood changed (logged).
+    """
+    try:
+        if label:
+            r = _post("/social/mood", {"label": label, "valence": valence,
+                                       "arousal": arousal, "reason": reason})
+            cur = r.get("mood", {})
+            return f"mood set: {cur.get('label')} (v={cur.get('valence')}, a={cur.get('arousal')})"
+        r = _get("/social/mood", {"limit": 5})
+    except Exception as e:
+        return _server_down(e)
+    cur = r.get("current")
+    if not cur:
+        return "(no mood set yet)"
+    events = r.get("events", [])
+    lines = [f"current: {cur.get('label')} (v={cur.get('valence')}, a={cur.get('arousal')}) "
+             f"updated {cur.get('updated_at', '')[:16]}"]
+    for ev in events:
+        lines.append(f"  [{(ev.get('ts', '') or '')[:16]}] {ev.get('label')} - {ev.get('reason', '')}")
+    return "\n".join(lines)
 
 
 def main():

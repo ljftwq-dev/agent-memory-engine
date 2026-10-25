@@ -13,11 +13,17 @@ Endpoints:
   GET  /recent?k=5          latest k memories (by time, desc)
   GET  /search?q=           keyword LIKE match
   GET  /sessions/active     other agents' current tasks (multi-agent collab)
+  GET  /social/fan          one fan card (?platform=&uid=)
+  GET  /social/fans         fan cards, most-favored first (?platform=&limit=)
+  GET  /social/mood         current mood + recent mood events (?limit=)
   POST /remember            {topic, summary, raw?, dedup?, summarize?}
   POST /forget              {purge?, threshold?} -> run a decay pass
   POST /session/register    {session_id, task}
   POST /session/heartbeat   {session_id, progress?, task?}
   POST /session/finish      {session_id, result?}
+  POST /social/fan          {platform, uid, nickname?, favor?, favor_delta?,
+                             impression?, trait?, relation?, blacklist?}
+  POST /social/mood         {label, valence?, arousal?, reason?}
 
 Run:
   python -m engine.server
@@ -35,10 +41,22 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import config, db, embed, reranker
+from . import config, db, embed, reranker, social
 from .recall import recall as do_recall
 from .remember import remember as do_remember
 from .forget import decay_all
+
+
+# Social tables are created lazily on first social-endpoint access, so
+# deployments that never touch the social layer keep a pristine DB.
+_social_ready = False
+
+
+def _ensure_social():
+    global _social_ready
+    if not _social_ready:
+        social.init_social()
+        _social_ready = True
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +168,8 @@ _STATS = {
     "recalls_served": 0,       # successful GET /recall count
     "recall_results": 0,       # sum of results returned (for the average)
     "remembers": 0,            # successful POST /remember count
-    "remember_merges": 0,      # ...of which were dedup merges
+    "remember_merges": 0,
+    "social_writes": 0,        # POST /social/fan + /social/mood count     # ...of which were dedup merges
     "forgets": 0,              # successful POST /forget count
     "last_forget_purged": None,  # memories purged by the last /forget
 }
@@ -213,7 +232,8 @@ def search_keyword(q, k=5):
 class Handler(BaseHTTPRequestHandler):
     _READ_ONLY = False
     WRITE_PATHS = {"/remember", "/forget",
-                   "/session/register", "/session/heartbeat", "/session/finish"}
+                   "/session/register", "/session/heartbeat", "/session/finish",
+                   "/social/fan", "/social/mood"}
 
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
@@ -351,6 +371,40 @@ class Handler(BaseHTTPRequestHandler):
                                  "sessions": sessions})
                 return
 
+            if url.path == "/social/fan":
+                platform = (qs.get("platform", [""])[0] or "").strip()
+                uid = (qs.get("uid", [""])[0] or "").strip()
+                if not platform or not uid:
+                    self._err(400, "missing 'platform' or 'uid'")
+                    return
+                _ensure_social()
+                card = social.get_fan(platform, uid)
+                self._send(200, {"ok": True, "found": card is not None,
+                                 "fan": card})
+                return
+
+            if url.path == "/social/fans":
+                platform = (qs.get("platform", [""])[0] or "").strip() or None
+                try:
+                    limit = int(qs.get("limit", ["100"])[0])
+                except (ValueError, TypeError):
+                    limit = 100
+                _ensure_social()
+                fans = social.list_fans(platform=platform, limit=limit)
+                self._send(200, {"ok": True, "count": len(fans), "fans": fans})
+                return
+
+            if url.path == "/social/mood":
+                try:
+                    limit = int(qs.get("limit", ["10"])[0])
+                except (ValueError, TypeError):
+                    limit = 10
+                _ensure_social()
+                self._send(200, {"ok": True,
+                                 "current": social.get_mood(),
+                                 "events": social.recent_mood_events(limit=limit)})
+                return
+
             self._err(404, f"unknown path: {url.path}")
         except Exception as e:
             self._send(500, {"ok": False, "error": str(e),
@@ -434,6 +488,46 @@ class Handler(BaseHTTPRequestHandler):
                     self._err(404, f"unknown session_id: {sid}")
                     return
                 self._send(200, {"ok": True, "session_id": sid, "status": "finished"})
+                return
+
+            if url.path == "/social/fan":
+                platform = (data.get("platform") or "").strip()
+                uid = (data.get("uid") or "").strip()
+                if not platform or not uid:
+                    self._err(400, "missing 'platform' or 'uid'")
+                    return
+                favor = data.get("favor")
+                favor_delta = data.get("favor_delta")
+                blacklist = data.get("blacklist")
+                _ensure_social()
+                card = social.upsert_fan(
+                    platform, uid,
+                    nickname=data.get("nickname"),
+                    favor=int(favor) if favor is not None else None,
+                    favor_delta=int(favor_delta) if favor_delta is not None else None,
+                    impression=data.get("impression"),
+                    trait=data.get("trait"),
+                    relation=data.get("relation"),
+                    blacklist=blacklist,
+                )
+                _bump(social_writes=1)
+                self._send(200, {"ok": True, "fan": card})
+                return
+
+            if url.path == "/social/mood":
+                label = (data.get("label") or "").strip()
+                if not label:
+                    self._err(400, "missing 'label'")
+                    return
+                _ensure_social()
+                current = social.set_mood(
+                    label,
+                    valence=int(data.get("valence", 0) or 0),
+                    arousal=int(data.get("arousal", 0) or 0),
+                    reason=data.get("reason", ""),
+                )
+                _bump(social_writes=1)
+                self._send(200, {"ok": True, "mood": current})
                 return
 
             self._err(404, f"unknown path: {url.path}")

@@ -4,7 +4,24 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-25
+
+### Added
+- **Social memory layer** (`engine/social.py`): structured audience memory for
+  persona agents, layered on the same SQLite file / write lock as episodic
+  memories. Purely additive - existing tables and code paths untouched.
+  - `social_card` table: per (platform, uid) fan cards with relation tier
+    (stranger/fan/regular/friend + manual master/blocked), favor score
+    (0-100, auto-maps to tier), impressions & traits logs (last 20 lines).
+  - `mood_state` singleton + `mood_event` log: persistent agent mood for
+    cross-session emotional continuity (save on exit, restore on wake).
+  - API: `init_social / upsert_fan / get_fan / list_fans / bump_favor /
+    set_mood / get_mood / recent_mood_events`.
+  - HTTP endpoints: `GET /social/fan|fans|mood`, `POST /social/fan|mood`
+    (write paths honor read-only mode; `social_writes` metric added).
+  - MCP tools: `social_get_fan`, `social_update_fan`, `social_mood`.
+  - Tables are created lazily on first social call - deployments that never
+    use the layer keep a pristine DB.
 
 ## [0.3.1] - 2026-10-20
 
