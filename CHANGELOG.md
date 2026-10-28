@@ -4,6 +4,74 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-27
+
+The long-term-memory architecture pass: what kind of thing a memory IS now
+determines how it forgets; the agent can keep an append-only first-person
+history (letters to the future self); and a concept-level directory (engram
+layer) with nightly consolidation answers "what do we know about X overall".
+
+### Added
+- **Memory typology** (`kind` on every episodic memory):
+  `episode | fact | strategy | capability | error`, additive schema
+  migration, exposed through `remember()` / `POST /remember` /
+  MCP `remember`.
+  - Per-kind decay policy: default tau 7 / 30 / 90 / 180 / 365 days.
+  - `error` and `capability` memories are **never purged** — lessons were
+    being decayed away like ordinary episodes, which is why they ended up
+    exiled to hand-maintained notes. `engine.forget` keeps decaying their
+    strength but refuses to delete them.
+  - Merge promotion: a new memory landing on a near-duplicate row upgrades
+    to the stronger kind (rank-up-only) and floors tau at the new kind's
+    default. Invalid kinds raise `ValueError` (a lesson stored under the
+    wrong type silently loses purge protection — fail loudly instead).
+- **Append-only letters mailbox** (`engine/letters.py`): one short
+  first-person letter per day to the future self, <=500 chars (rejected,
+  never silently truncated). Immutability is structural: `BEFORE
+  UPDATE/DELETE` triggers `RAISE(ABORT)` — the past physically cannot be
+  rewritten, by design. Reads are oldest-first (narrative order for
+  cold-start). HTTP: `POST /letter/write`, `GET /letters`; MCP:
+  `letter_write`, `letter_read`; CLI: `python -m engine.letters`.
+- **Engram concept directory** (`engine/engram.py`): one row per concept
+  with a one-line current-state summary and member memory rowids — the
+  missing layer that answers "what do we know about X overall" without
+  paging through fragments. A living directory (refresh rewrites state and
+  unions members, unlike letters). Confidence: manual registration nudges
+  toward 1.0; automated consolidation starts at 0.4 and (via
+  `confidence_floor`) can never dilute a manually earned value. Vectors
+  embed the concept name only — summary text diluted retrieval in
+  production. HTTP: `POST /engram/upsert`, `GET /engram/lookup`, `GET
+  /engrams`; MCP: `engram_upsert`, `engram_lookup`; CLI: `python -m
+  engine.engram`.
+- **Nightly consolidation** (`engine/consolidate.py`): average-linkage
+  agglomerative clustering over the last N days (single-link was tried
+  first and chained 416/606 memories into one blob on production data),
+  LLM cluster naming + conservative kind judging (rank-up-only), engram
+  distillation with name-level dedup (folds near-duplicate concept names
+  into the incumbent), and an evidence-anchored letter draft (drafts are
+  hand-sealed via `letter_write`, never auto-sealed). Per-night cluster
+  budget (30) with overflow deferred to the next window. Graceful
+  degradation without an LLM. CLI: `python -m engine.consolidate`.
+- `include_raw` on recall: `/recall` and `recall()` no longer return each
+  memory's full `raw` text — opt in with `?include_raw=1` / CLI `--raw`.
+  API callers naively dumping recall JSON into a prompt were one refactor
+  away from injecting unbounded text.
+
+### Fixed
+- **Unbounded `raw` growth on the dedup-merge path** — merging appended
+  `old_raw + new_raw` forever; a hot memory merged hundreds of times grew
+  into a token bomb. Raw is now capped at write time (8192 chars, FIFO
+  drop of the oldest with a visible truncation marker). `summary` gets a
+  hard 500-char cap (long summaries ride along in every injected recall
+  result).
+- Test isolation: lazy-init domain tables (letters / social / engram) are
+  not covered by `init_db(force=True)` and leaked across tests; the
+  conftest now drops and re-creates them per test.
+
+### Tests
+- Suite grows to 110 (typology, mailbox immutability attacks, size caps,
+  engram directory, consolidation mechanics).
+
 ## [0.4.0] - 2026-10-25
 
 ### Added

@@ -125,6 +125,7 @@ def init_db(dim=None, force=False):
 
 _EPISODIC_MIGRATIONS = [
     ("session_id", "TEXT"),   # a6389f0: multi-agent anti cross-talk
+    ("kind", "TEXT"),         # P1: memory typology (episode|fact|strategy|capability|error)
 ]
 
 

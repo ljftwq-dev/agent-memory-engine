@@ -9,14 +9,19 @@ endpoint except /health and /metrics (issue #4).
 Endpoints:
   GET  /health              service status (embed mode/dim, reranker, db path, llm on/off)
   GET  /metrics             lightweight usage counters (observability)
-  GET  /recall?q=&k=3       two-stage semantic recall, top-k (?rerank=1 to force cross-encoder)
+  GET  /recall?q=&k=3       two-stage semantic recall, top-k (?rerank=1 to force cross-encoder; ?include_raw=1 to also return each memory's raw text, off by default)
   GET  /recent?k=5          latest k memories (by time, desc)
   GET  /search?q=           keyword LIKE match
   GET  /sessions/active     other agents' current tasks (multi-agent collab)
   GET  /social/fan          one fan card (?platform=&uid=)
   GET  /social/fans         fan cards, most-favored first (?platform=&limit=)
   GET  /social/mood         current mood + recent mood events (?limit=)
-  POST /remember            {topic, summary, raw?, dedup?, summarize?}
+  POST /letter/write        {body, day?} -> append a letter to the future self
+  GET  /letters?n=3         latest n letters, oldest-first (append-only mailbox)
+  POST /engram/upsert       {concept, state_summary, member_rowids?, confidence?}
+  GET  /engram/lookup?q=&k=3  concept-directory lookup for a natural query
+  GET  /engrams?n=10        directory overview (most confident first)
+  POST /remember            {topic, summary, raw?, dedup?, summarize?, kind?}
   POST /forget              {purge?, threshold?} -> run a decay pass
   POST /session/register    {session_id, task}
   POST /session/heartbeat   {session_id, progress?, task?}
@@ -334,7 +339,10 @@ class Handler(BaseHTTPRequestHandler):
                 do_rerank = None
                 if "rerank" in qs:
                     do_rerank = qs["rerank"][0].lower() in ("1", "true", "yes", "on")
-                results = do_recall(q, top_k=k, update=do_update, rerank=do_rerank)
+                include_raw = qs.get("include_raw", ["false"])[0].lower() in (
+                    "1", "true", "yes", "on")
+                results = do_recall(q, top_k=k, update=do_update, rerank=do_rerank,
+                                    include_raw=include_raw)
                 _bump(recalls_served=1, recall_results=len(results))
                 self._send(200, {"ok": True, "query": q, "count": len(results),
                                  "updated": do_update, "results": results})
@@ -348,6 +356,43 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 results = get_recent(k=k)
                 self._send(200, {"ok": True, "count": len(results), "results": results})
+                return
+
+            if url.path == "/letters":
+                try:
+                    n = int(qs.get("n", ["3"])[0])
+                except (ValueError, TypeError):
+                    n = 3
+                from . import letters as _letters
+                results = _letters.read_recent(n=n)
+                self._send(200, {"ok": True, "count": len(results),
+                                 "letters": results})
+                return
+
+            if url.path == "/engram/lookup":
+                q = (qs.get("q", [""])[0] or "").strip()
+                if not q:
+                    self._err(400, "missing query param 'q'")
+                    return
+                try:
+                    k = int(qs.get("k", ["3"])[0])
+                except (ValueError, TypeError):
+                    k = 3
+                from . import engram as _engram
+                results = _engram.lookup(q, top_k=k)
+                self._send(200, {"ok": True, "query": q, "count": len(results),
+                                 "engrams": results})
+                return
+
+            if url.path == "/engrams":
+                try:
+                    n = int(qs.get("n", ["10"])[0])
+                except (ValueError, TypeError):
+                    n = 10
+                from . import engram as _engram
+                results = _engram.list_top(n=n)
+                self._send(200, {"ok": True, "count": len(results),
+                                 "engrams": results})
                 return
 
             if url.path == "/search":
@@ -434,15 +479,52 @@ class Handler(BaseHTTPRequestHandler):
                 summarize = data.get("summarize", True)
                 if isinstance(summarize, str):
                     summarize = summarize.lower() in ("1", "true", "yes")
+                kind = data.get("kind") or "episode"
+                from .remember import KINDS
+                if kind not in KINDS:
+                    self._err(400, f"invalid 'kind' {kind!r}; expected one of {KINDS}")
+                    return
                 rowid, action = do_remember(
                     topic=topic, summary=summary, raw=data.get("raw"),
                     ts=data.get("ts"), dedup=dedup, summarize=summarize,
-                    session_id=data.get("session_id"),
+                    session_id=data.get("session_id"), kind=kind,
                 )
                 _bump(remembers=1,
                       **({"remember_merges": 1} if action == "merged" else {}))
                 self._send(200, {"ok": True, "id": rowid, "action": action,
                                  "topic": topic})
+                return
+
+            if url.path == "/engram/upsert":
+                concept = (data.get("concept") or "").strip()
+                state_summary = (data.get("state_summary") or "").strip()
+                if not concept or not state_summary:
+                    self._err(400, "missing 'concept' or 'state_summary'")
+                    return
+                from . import engram as _engram
+                try:
+                    concept, action = _engram.upsert(
+                        concept, state_summary,
+                        member_rowids=data.get("member_rowids"),
+                        confidence=data.get("confidence"))
+                except ValueError as e:
+                    self._err(400, str(e))
+                    return
+                self._send(200, {"ok": True, "concept": concept, "action": action})
+                return
+
+            if url.path == "/letter/write":
+                body = (data.get("body") or "").strip()
+                if not body:
+                    self._err(400, "missing 'body'")
+                    return
+                from . import letters as _letters
+                try:
+                    lid, day = _letters.write_letter(body, day=data.get("day"))
+                except ValueError as e:
+                    self._err(400, str(e))
+                    return
+                self._send(200, {"ok": True, "id": lid, "day": day})
                 return
 
             if url.path == "/forget":

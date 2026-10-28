@@ -9,10 +9,15 @@ For each memory we recompute ``strength = exp(-dt/tau)``:
 By default only ``strength`` is updated (reversible). Use ``--purge`` to
 actually delete memories below the threshold (and their vector rows).
 
+P1 typology: ``error`` and ``capability`` memories are never purged — their
+strength still decays (and recall still refreshes it), but the rows survive.
+A lesson forgotten is a lesson relearned the hard way; deleting it from the
+DB is how the engine ended up with lessons exiled to hand-maintained notes.
+
 CLI:
   python -m engine.forget                 # decay only
   python -m engine.forget --dry-run       # preview
-  python -m engine.forget --purge         # decay + purge weak memories
+  python -m engine.forget --purge         # decay + purge weak unprotected memories
 """
 import argparse
 import math
@@ -20,6 +25,10 @@ import os
 from datetime import datetime
 
 from . import config, db
+from .remember import KINDS  # noqa: F401  (re-export convenience)
+
+# kinds that decay but are never DELETEd by --purge
+PROTECTED_KINDS = ("error", "capability")
 
 
 def _parse_ts(s):
@@ -44,7 +53,7 @@ def decay_all(threshold=0.05, purge=False, dry_run=False, min_age_days=0):
     try:
         rows = conn.execute(
             "SELECT rowid, ts, topic, summary, strength, tau, "
-            "last_recall_ts, created_ts FROM episodic"
+            "last_recall_ts, created_ts, kind FROM episodic"
         ).fetchall()
 
         decayed = purged = kept = 0
@@ -61,15 +70,22 @@ def decay_all(threshold=0.05, purge=False, dry_run=False, min_age_days=0):
                 continue
             tau_days = max(r["tau"] or 7.0, 0.001)
             new_strength = math.exp(-delta_days / tau_days)
+            kind = r["kind"] or "episode"
+            protected = kind in PROTECTED_KINDS
 
             if dry_run:
-                tag = "PURGE" if (purge and new_strength < threshold) else "keep "
+                if protected:
+                    tag = "PROT "
+                elif purge and new_strength < threshold:
+                    tag = "PURGE"
+                else:
+                    tag = "keep "
                 print(f"  [{tag}] #{r['rowid']:>4}  s {r['strength']:.3f}->{new_strength:.3f}  "
-                      f"tau={tau_days:.1f}d  dt={delta_days:.1f}d  {(r['topic'] or '')[:40]}")
+                      f"tau={tau_days:.1f}d  dt={delta_days:.1f}d  {kind:<10}  {(r['topic'] or '')[:40]}")
                 continue
 
             with db.WRITE_LOCK:
-                if purge and new_strength < threshold:
+                if purge and new_strength < threshold and not protected:
                     conn.execute("DELETE FROM episodic WHERE rowid = ?", (r["rowid"],))
                     conn.execute("DELETE FROM episodic_vec WHERE rowid = ?", (r["rowid"],))
                     purged += 1

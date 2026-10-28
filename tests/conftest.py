@@ -31,9 +31,29 @@ import pytest  # noqa: E402
 
 from engine import db, embed  # noqa: E402
 
+# Lazy-init domain tables live outside init_db's force-reset (which only
+# drops the core episodic/session tables), so tests must drop them here or
+# they leak across tests (e.g. stale engram entries breaking list_top
+# ordering assertions). DROP TABLE bypasses row-level triggers, which is
+# exactly what the append-only letters table needs for a test reset.
+_LAZY_TABLES = ("letters", "social_card", "mood_state", "mood_event",
+                "engram", "engram_vec")
+
 
 @pytest.fixture(autouse=True)
 def _fresh_db():
     """Wipe + re-init the DB before every test for full isolation."""
     db.init_db(dim=embed.dim(), force=True)
+    conn = db.get_conn()
+    try:
+        with db.WRITE_LOCK:
+            for t in _LAZY_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {t}")
+            conn.commit()
+    finally:
+        conn.close()
+    # reset lazy-init flags so the modules recreate their tables on next use
+    from engine import letters as _letters, engram as _engram
+    _letters._ready = False
+    _engram._ready = False
     yield

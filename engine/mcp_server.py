@@ -28,6 +28,10 @@ Tools exposed:
     social_get_fan    - one fan's card (relation/favor/impressions) for personalized replies
     social_update_fan - create/update a fan card (favor +/-, impressions, blacklist)
     social_mood       - get/set the persona agent's persistent mood
+    letter_write      - append a sealed first-person letter to the future self
+    letter_read       - read recent letters (append-only, cold-start narrative)
+    engram_upsert     - register/refresh a concept in the memory directory
+    engram_lookup     - concept-directory lookup ("what do we know about X")
 """
 import json
 import os
@@ -116,7 +120,8 @@ def recall(query: str, top_k: int = 3) -> str:
 
 
 @mcp.tool()
-def remember(topic: str, summary: str, raw: str = "", session_id: str = "") -> str:
+def remember(topic: str, summary: str, raw: str = "", session_id: str = "",
+             kind: str = "episode") -> str:
     """Store a new episodic memory. Call this when a turn produces something
     worth remembering later (a decision, a fix, a fact learned). Near-duplicate
     summaries auto-merge into the existing memory instead of creating clutter.
@@ -129,8 +134,13 @@ def remember(topic: str, summary: str, raw: str = "", session_id: str = "") -> s
             embedded; useful for later reference.
         session_id: Optional tag for which agent session wrote this (helps tell
             memories apart in multi-agent setups).
+        kind: Memory type - one of episode|fact|strategy|capability|error.
+            Type sets the decay policy: error (lessons/pitfalls) and
+            capability are NEVER purged; error starts with tau=365d vs
+            episode's 7d. Store hard-won lessons as kind="error".
     """
-    payload = {"topic": topic, "summary": summary, "dedup": True, "summarize": False}
+    payload = {"topic": topic, "summary": summary, "dedup": True,
+               "summarize": False, "kind": kind}
     if raw:
         payload["raw"] = raw
     if session_id:
@@ -140,6 +150,100 @@ def remember(topic: str, summary: str, raw: str = "", session_id: str = "") -> s
     except Exception as e:
         return _server_down(e)
     return f"{r.get('action', '?')} memory #{r.get('id')}  |  topic: {topic}"
+
+
+@mcp.tool()
+def letter_write(body: str) -> str:
+    """Append a sealed letter to the future self (append-only mailbox, max
+    500 chars). Call at the end of a meaningful day/session: record what you
+    thought, learned and worried about TODAY, first-person — NOT a plan or a
+    to-do list (plans expire, letters don't). The past cannot be rewritten or
+    deleted afterwards; if you change your mind, write a new letter.
+
+    Args:
+        body: The letter, <=500 chars, first-person. What happened, what you
+            understood, what you're unsure about — the narrative arc a future
+            cold-start self should read to remember who it is becoming.
+    """
+    try:
+        r = _post("/letter/write", {"body": body})
+    except Exception as e:
+        return _server_down(e)
+    return f"letter #{r.get('id')} sealed for {r.get('day')}"
+
+
+@mcp.tool()
+def letter_read(n: int = 3) -> str:
+    """Read the latest n letters from past selves, oldest-first. Call at
+    session cold-start (together with recall) to recover the narrative arc:
+    how judgment, strategies and relationships actually evolved. Append-only:
+    these are sealed history, not living notes.
+
+    Args:
+        n: How many recent letters to read (default 3).
+    """
+    try:
+        r = _get("/letters", {"n": n})
+    except Exception as e:
+        return _server_down(e)
+    letters = r.get("letters", [])
+    if not letters:
+        return "(mailbox is empty)"
+    blocks = [f"--- {l['day']} #{l['id']} ---\n{l['body']}" for l in letters]
+    return "\n\n".join(blocks)
+
+
+@mcp.tool()
+def engram_upsert(concept: str, state_summary: str,
+                  member_rowids: list[int] | None = None) -> str:
+    """Register or refresh a CONCEPT in the memory directory (engram layer).
+
+    Call after a meaningful work session: name the concept in a few words
+    ("memory engine", "biligirl channel") and write ONE line on its current
+    state. Refreshing rewrites the state line (a living directory entry, by
+    design - unlike letters) and unions the member rowids. Lookup-by-query
+    and cold-start bootstrap read this directory later.
+
+    Args:
+        concept: Short concept name, stable across sessions (it's the key).
+        state_summary: One information-dense line: where does this stand now.
+        member_rowids: Optional episodic rowids that belong to this concept.
+    """
+    payload = {"concept": concept, "state_summary": state_summary}
+    if member_rowids:
+        payload["member_rowids"] = member_rowids
+    try:
+        r = _post("/engram/upsert", payload)
+    except Exception as e:
+        return _server_down(e)
+    return f"{r.get('action')} engram: {concept}"
+
+
+@mcp.tool()
+def engram_lookup(query: str, k: int = 3) -> str:
+    """Look up the concept directory (engram layer) for a natural-language
+    query. Use BEFORE or ALONGSIDE recall to answer "what do we know about X
+    overall" - recall returns fragments, this returns the concept-level
+    state summary and how many memories sit under each concept.
+
+    Args:
+        query: Natural language, e.g. "what's the state of the biligirl channel".
+        k: Max concepts to return (default 3).
+    """
+    try:
+        r = _get("/engram/lookup", {"q": query, "k": k})
+    except Exception as e:
+        return _server_down(e)
+    hits = r.get("engrams", [])
+    if not hits:
+        return "(no matching concepts in the directory)"
+    lines = []
+    for i, h in enumerate(hits, 1):
+        lines.append(
+            f"[{i}] {h['concept']}  (conf={h['confidence']}, "
+            f"members={h['member_count']}, updated {h['updated_ts'][:10]})\n"
+            f"    {h['state_summary']}")
+    return "\n".join(lines)
 
 
 @mcp.tool()

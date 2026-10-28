@@ -72,7 +72,8 @@ def _bm25_recall(conn, query, k):
 
 
 def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
-           recall_pool=None, alpha=None, hybrid=None, bm25_pool=None, rerank=None):
+           recall_pool=None, alpha=None, hybrid=None, bm25_pool=None, rerank=None,
+           include_raw=False):
     """Hybrid retrieval, returns up to ``top_k`` dicts.
 
     Each result additionally carries: ``strength_now``, ``score``, and either
@@ -110,7 +111,7 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
             """
             SELECT e.rowid, e.ts, e.topic, e.summary, e.raw,
                    e.strength, e.tau, e.last_recall_ts, e.created_ts,
-                   e.session_id, v.distance
+                   e.session_id, e.kind, v.distance
             FROM episodic_vec v
             JOIN episodic e ON e.rowid = v.rowid
             WHERE v.embedding MATCH ?
@@ -138,7 +139,7 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
                 placeholders = ",".join("?" * len(missing))
                 extra = conn.execute(
                     f"SELECT rowid, ts, topic, summary, raw, strength, tau, "
-                    f"last_recall_ts, created_ts, session_id FROM episodic "
+                    f"last_recall_ts, created_ts, session_id, kind FROM episodic "
                     f"WHERE rowid IN ({placeholders})",
                     missing,
                 ).fetchall()
@@ -222,6 +223,13 @@ def recall(query, top_k=3, threshold=None, update=False, min_strength=None,
         candidates.sort(key=lambda x: x["score"], reverse=True)
         results = candidates[:top_k]
 
+        # Raw is fetched for the rerank stage (which prefers full text) but is
+        # NOT returned by default: API callers naively dumping the JSON into a
+        # prompt would inject unbounded raw text. Opt in with include_raw.
+        if not include_raw:
+            for r in results:
+                r.pop("raw", None)
+
         if update and results:
             now_iso = now.isoformat(timespec="seconds")
             with db.WRITE_LOCK:
@@ -280,6 +288,8 @@ def main():
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--update", action="store_true",
                         help="update last_recall/strength after recall (use-it-or-lose-it)")
+    parser.add_argument("--raw", action="store_true",
+                        help="include the full raw text in results (default: summary only)")
     args = parser.parse_args()
 
     results = recall(
@@ -287,6 +297,7 @@ def main():
         update=args.update, min_strength=args.min_strength,
         recall_pool=args.recall_pool, alpha=args.alpha,
         hybrid=args.hybrid, bm25_pool=args.bm25_pool, rerank=args.rerank,
+        include_raw=args.raw,
     )
     is_hybrid = args.hybrid if args.hybrid is not None else config.hybrid_enable()
     print(_format(results, "json" if args.json else "text", hybrid=is_hybrid))
