@@ -32,6 +32,7 @@ Tools exposed:
     letter_read       - read recent letters (append-only, cold-start narrative)
     engram_upsert     - register/refresh a concept in the memory directory
     engram_lookup     - concept-directory lookup ("what do we know about X")
+    bootstrap         - cold-start pack: letters+directory+errors+probes, compact
 """
 import json
 import os
@@ -244,6 +245,25 @@ def engram_lookup(query: str, k: int = 3) -> str:
             f"members={h['member_count']}, updated {h['updated_ts'][:10]})\n"
             f"    {h['state_summary']}")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def bootstrap(max_chars: int = 3000) -> str:
+    """The cold-start pack: call ONCE at session start instead of assembling
+    letters + directory + error lessons + sibling sessions one tool at a
+    time. Compact key:value lines (no markdown - the reader is a context
+    window). Includes a proactive probe: the directory is looked up with the
+    last stored memory and active sibling sessions, so returned concepts are
+    relevant to NOW, not just globally top-ranked.
+
+    Args:
+        max_chars: hard character budget (default 3000).
+    """
+    try:
+        r = _get("/bootstrap", {"max_chars": max_chars})
+    except Exception as e:
+        return _server_down(e)
+    return r.get("pack", "")
 
 
 @mcp.tool()

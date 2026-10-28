@@ -21,6 +21,7 @@ Endpoints:
   POST /engram/upsert       {concept, state_summary, member_rowids?, confidence?}
   GET  /engram/lookup?q=&k=3  concept-directory lookup for a natural query
   GET  /engrams?n=10        directory overview (most confident first)
+  GET  /bootstrap?max_chars=3000  cold-start pack (letters+directory+errors+probes)
   POST /remember            {topic, summary, raw?, dedup?, summarize?, kind?}
   POST /forget              {purge?, threshold?} -> run a decay pass
   POST /session/register    {session_id, task}
@@ -393,6 +394,16 @@ class Handler(BaseHTTPRequestHandler):
                 results = _engram.list_top(n=n)
                 self._send(200, {"ok": True, "count": len(results),
                                  "engrams": results})
+                return
+
+            if url.path == "/bootstrap":
+                try:
+                    mc = int(qs.get("max_chars", ["3000"])[0])
+                except (ValueError, TypeError):
+                    mc = 3000
+                from . import bootstrap as _bootstrap
+                text, stats = _bootstrap.build_pack(max_chars=mc)
+                self._send(200, {"ok": True, "stats": stats, "pack": text})
                 return
 
             if url.path == "/search":

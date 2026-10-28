@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-10-28
+
+### Added
+- **Cold-start boot pack** (`engine/bootstrap.py`): one call assembles what a
+  fresh session reads first — recent letters (narrative arc), directory
+  overview, top error lessons, active sibling sessions, plus a proactive
+  probe (session-start-scan pattern): the directory is looked up with the
+  last stored memory, so returned concepts are relevant to NOW rather than
+  globally top-ranked. Compact key:value lines, hard character budget with
+  line-then-char trimming, and a CJK-aware token estimate. HTTP:
+  `GET /bootstrap?max_chars=3000`; MCP: `bootstrap` (call once at session
+  start instead of five assembling calls); CLI: `python -m engine.bootstrap`.
+
 ## [0.5.0] - 2026-10-27
 
 The long-term-memory architecture pass: what kind of thing a memory IS now
